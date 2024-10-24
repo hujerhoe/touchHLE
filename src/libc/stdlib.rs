@@ -229,6 +229,27 @@ fn exit(env: &mut Environment, exit_code: i32) {
     std::process::exit(exit_code);
 }
 
+fn __assert_rtn(
+    env: &mut Environment,
+    func: ConstPtr<u8>,
+    file: ConstPtr<u8>,
+    line: u32,
+    exp: ConstPtr<u8>,
+) {
+    let func_cstr = env.mem.cstr_at_utf8(func).unwrap();
+    let file_cstr = env.mem.cstr_at_utf8(file).unwrap();
+    let exp_cstr = env.mem.cstr_at_utf8(exp).unwrap();
+
+    echo!(
+        "App called __assert_rtn({}, {}, {}, {}), exiting.",
+        func_cstr,
+        file_cstr,
+        line,
+        exp_cstr
+    );
+    std::process::exit(-1);
+}
+
 fn bsearch(
     env: &mut Environment,
     key: ConstVoidPtr,
@@ -399,6 +420,7 @@ fn wcstombs(
 }
 
 pub const FUNCTIONS: FunctionExports = &[
+    export_c_func!(__assert_rtn(_, _, _, _)),
     export_c_func!(malloc(_)),
     export_c_func!(calloc(_, _)),
     export_c_func!(realloc(_, _)),
