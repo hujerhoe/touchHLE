@@ -698,6 +698,41 @@ impl Fs {
         matches!(self.lookup_node(path), Some(FsNode::Directory { .. }))
     }
 
+    pub fn modified(&self, path: &GuestPath) -> Result<i64, ()> {
+        // TODO: error handling
+        let node = self.lookup_node(path).ok_or(())?;
+        match node {
+            FsNode::File { location, .. } => match location {
+                // Note: the returned time is consistent with 'Date' and 'Time'
+                // of files inside IPA archive as reported by 7-zip.
+                // But it can be few hours off in comparison with modification
+                // time reported by NSFileModificationDate for app bundle files
+                // and changes if system timezone changes and apps gets
+                // re-installed!
+                // This shouldn't be a big problem as we're always assuming
+                // GMT in the codebase right now.
+                // TODO: double check that when we support different timezones
+                FileLocation::IpaFileRef(ipa_file_ref) => {
+                    Ok(ipa_file_ref.get_last_modified().into())
+                }
+                _ => unimplemented!(),
+            },
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn size(&self, path: &GuestPath) -> Result<u64, ()> {
+        // TODO: error handling
+        let node = self.lookup_node(path).ok_or(())?;
+        match node {
+            FsNode::File { location, .. } => match location {
+                FileLocation::IpaFileRef(ipa_file_ref) => Ok(ipa_file_ref.get_size()),
+                _ => unimplemented!(),
+            },
+            _ => unimplemented!(),
+        }
+    }
+
     /// Get an iterator over the names of files/directories in a directory.
     pub fn enumerate<P: AsRef<GuestPath>>(
         &self,
@@ -784,32 +819,55 @@ impl Fs {
         }
     }
 
-    pub fn rename<P: AsRef<GuestPath>>(&self, from: P, to: P) -> Result<(), ()> {
+    pub fn rename<P: AsRef<GuestPath> + Copy>(&mut self, from: P, to: P) -> Result<(), ()> {
         let from_node = self.lookup_node(from.as_ref()).ok_or(())?;
-        match from_node {
+        let from_host_path = match from_node {
             FsNode::File {
                 location: from_location,
-                ..
-            } => match from_location {
-                FileLocation::Path(from_host_path) => {
-                    let to_node = self.lookup_node(to.as_ref()).ok_or(())?;
-                    match to_node {
-                        FsNode::File {
-                            location: to_location,
-                            ..
-                        } => match to_location {
-                            FileLocation::Path(to_host_path) => {
-                                fs::rename(from_host_path, to_host_path).map_err(|_| ())
-                            }
-                            _ => unreachable!(),
-                        },
-                        _ => unimplemented!(),
-                    }
-                }
-                _ => unreachable!(),
-            },
+                writeable: from_writeable,
+            } => {
+                let FileLocation::Path(from_host_path) = from_location else {
+                    // TODO: return EISDIR
+                    return Err(());
+                };
+                assert!(from_writeable); // TODO: return errno
+                                         // TODO: avoid copy?
+                from_host_path.clone()
+            }
             _ => unimplemented!(),
+        };
+
+        if self.lookup_node(to.as_ref()).is_none() {
+            // In case target guest node do not exist, we need to create one
+            let mut options = GuestOpenOptions::new();
+            options.write().create().truncate();
+            self.open_with_options(to, options)?;
         }
+
+        let to_node = self.lookup_node(to.as_ref()).unwrap();
+        let FsNode::File {
+            location: to_location,
+            writeable: to_writeable,
+        } = to_node
+        else {
+            // TODO: return EISDIR
+            return Err(());
+        };
+        let FileLocation::Path(to_host_path) = to_location else {
+            // TODO: return EACCES
+            return Err(());
+        };
+        assert!(to_writeable); // TODO: return errno
+        let res = fs::rename(from_host_path, to_host_path);
+        if res.is_ok() {
+            // Remove reference to the old from node
+            let (parent_from, component) = self.lookup_parent_node(from.as_ref()).unwrap();
+            let FsNode::Directory { children, .. } = parent_from else {
+                panic!()
+            };
+            children.remove(&component).unwrap();
+        }
+        res.map_err(|_| ())
     }
 
     /// Like [File::options] but for the guest filesystem.

@@ -7,22 +7,26 @@
 //! very long and frequently-updated list.
 
 use crate::frameworks::{
-    av_audio, core_animation, core_foundation, core_graphics, foundation, game_kit, media_player,
-    opengles, store_kit, uikit,
+    av_audio, core_animation, core_foundation, core_graphics, core_location, foundation, game_kit,
+    media_player, opengles, store_kit, uikit,
 };
 
 /// All the lists of classes that the runtime should search through.
 pub const CLASS_LISTS: &[super::ClassExports] = &[
     crate::app_picker::CLASSES, // Not a framework! Special internal classes.
+    core_animation::ca_animation::CLASSES,
     core_animation::ca_eagl_layer::CLASSES,
     core_animation::ca_layer::CLASSES,
+    core_animation::ca_media_timing_function::CLASSES,
     core_graphics::cg_data_provider::CLASSES,
     core_graphics::cg_color::CLASSES,
     core_graphics::cg_color_space::CLASSES,
     core_graphics::cg_context::CLASSES,
     core_graphics::cg_image::CLASSES,
     core_foundation::cf_run_loop_timer::CLASSES, // Special internal classes.
+    core_location::CLASSES,
     game_kit::gk_local_player::CLASSES,
+    game_kit::gk_score::CLASSES,
     foundation::ns_array::CLASSES,
     foundation::ns_autorelease_pool::CLASSES,
     foundation::ns_bundle::CLASSES,
@@ -61,6 +65,7 @@ pub const CLASS_LISTS: &[super::ClassExports] = &[
     media_player::movie_player::CLASSES,
     media_player::music_player::CLASSES,
     media_player::media_library::CLASSES,
+    media_player::media_picker_controller::CLASSES,
     media_player::media_query::CLASSES,
     opengles::eagl::CLASSES,
     store_kit::sk_payment_queue::CLASSES,
@@ -82,13 +87,17 @@ pub const CLASS_LISTS: &[super::ClassExports] = &[
     uikit::ui_view::ui_alert_view::CLASSES,
     uikit::ui_view::ui_control::CLASSES,
     uikit::ui_view::ui_control::ui_button::CLASSES,
-    uikit::ui_view::ui_control::ui_switch::CLASSES,
+    uikit::ui_view::ui_control::ui_segmented_control::CLASSES,
+    uikit::ui_view::ui_control::ui_slider::CLASSES,
     uikit::ui_view::ui_control::ui_text_field::CLASSES,
+    uikit::ui_view::ui_control::ui_switch::CLASSES,
     uikit::ui_view::ui_image_view::CLASSES,
     uikit::ui_view::ui_label::CLASSES,
     uikit::ui_view::ui_picker_view::CLASSES,
     uikit::ui_view::ui_scroll_view::CLASSES,
     uikit::ui_view::ui_scroll_view::ui_text_view::CLASSES,
+    uikit::ui_view::ui_web_view::CLASSES,
     uikit::ui_view::ui_window::CLASSES,
     uikit::ui_view_controller::CLASSES,
+    uikit::ui_view_controller::ui_navigation_controller::CLASSES,
 ];

@@ -14,6 +14,7 @@ pub mod ui_image_view;
 pub mod ui_label;
 pub mod ui_picker_view;
 pub mod ui_scroll_view;
+pub mod ui_web_view;
 pub mod ui_window;
 
 use super::ui_graphics::{UIGraphicsPopContext, UIGraphicsPushContext};
@@ -47,6 +48,7 @@ pub(super) struct UIViewHostObject {
     superview: id,
     /// The view controller that controls this view. This is a weak reference
     view_controller: id,
+    tag: NSInteger,
     clears_context_before_drawing: bool,
     user_interaction_enabled: bool,
     multiple_touch_enabled: bool,
@@ -61,6 +63,7 @@ impl Default for UIViewHostObject {
             subviews: Vec::new(),
             superview: nil,
             view_controller: nil,
+            tag: 0,
             clears_context_before_drawing: true,
             user_interaction_enabled: true,
             multiple_touch_enabled: false,
@@ -153,18 +156,30 @@ pub const CLASSES: ClassExports = objc_classes! {
     let key_ns_string = get_static_str(env, "UIOpaque");
     let opaque: bool = msg![env; coder decodeBoolForKey:key_ns_string];
 
+    let key_ns_string = get_static_str(env, "UIBackgroundColor");
+    let bg_color: id = msg![env; coder decodeObjectForKey:key_ns_string];
+
+    let key_ns_string = get_static_str(env, "UITag");
+    let tag: NSInteger = msg![env; coder decodeIntegerForKey:key_ns_string];
+
+    let key_ns_string = get_static_str(env, "UIMultipleTouchEnabled");
+    let multi_touch_enabled: bool = msg![env; coder decodeBoolForKey:key_ns_string];
+
     let key_ns_string = get_static_str(env, "UISubviews");
     let subviews: id = msg![env; coder decodeObjectForKey:key_ns_string];
     let subview_count: NSUInteger = msg![env; subviews count];
 
     log_dbg!(
-        "[(UIView*){:?} initWithCoder:{:?}] => bounds {}, center {}, hidden {}, opaque {}, {} subviews",
+        "[(UIView*){:?} initWithCoder:{:?}] => bounds {}, center {}, hidden {}, bg color {:?}, tag {}, opaque {}, multi touch enabled {}, {} subviews",
         this,
         coder,
         bounds,
         center,
         hidden,
+        bg_color,
+        tag,
         opaque,
+        multi_touch_enabled,
         subview_count,
     );
 
@@ -172,6 +187,9 @@ pub const CLASSES: ClassExports = objc_classes! {
     () = msg![env; this setCenter:center];
     () = msg![env; this setHidden:hidden];
     () = msg![env; this setOpaque:opaque];
+    () = msg![env; this setBackgroundColor:bg_color];
+    () = msg![env; this setTag:tag];
+    () = msg![env; this setMultipleTouchEnabled:multi_touch_enabled];
 
     for i in 0..subview_count {
         let subview: id = msg![env; subviews objectAtIndex:i];
@@ -179,6 +197,30 @@ pub const CLASSES: ClassExports = objc_classes! {
     }
 
     this
+}
+
+- (NSInteger)tag {
+    env.objc.borrow::<UIViewHostObject>(this).tag
+}
+- (())setTag:(NSInteger)tag {
+    env.objc.borrow_mut::<UIViewHostObject>(this).tag = tag;
+}
+
+- (id)viewWithTag:(NSInteger)tag {
+    let &UIViewHostObject {
+        ref subviews,
+        tag: view_tag,
+        ..
+    } = env.objc.borrow(this);
+    if view_tag == tag {
+        return this;
+    }
+    for view in subviews {
+        if env.objc.borrow::<UIViewHostObject>(*view).tag == tag {
+            return *view;
+        }
+    }
+    nil
 }
 
 - (bool)isUserInteractionEnabled {
@@ -257,6 +299,28 @@ pub const CLASSES: ClassExports = objc_classes! {
     }
 }
 
+- (())insertSubview:(id)view belowSubview:(id)sibling {
+    retain(env, view);
+    () = msg![env; view removeFromSuperview];
+
+    let subview_obj = env.objc.borrow_mut::<UIViewHostObject>(view);
+    subview_obj.superview = this;
+    let subview_layer = subview_obj.layer;
+
+    let sibling_layer = env.objc.borrow_mut::<UIViewHostObject>(sibling).layer;
+
+    let &mut UIViewHostObject {
+        ref mut subviews,
+        layer: this_layer,
+        ..
+    } = env.objc.borrow_mut(this);
+
+    let idx = subviews.iter().position(|&subview2| subview2 == sibling).unwrap();
+    subviews.insert(idx, view);
+
+    () = msg![env; this_layer insertSublayer:subview_layer below:sibling_layer];
+}
+
 - (())bringSubviewToFront:(id)subview {
     if subview == nil {
         // This happens in Touch & Go LITE. It's probably due to the ad classes
@@ -309,6 +373,7 @@ pub const CLASSES: ClassExports = objc_classes! {
         superview,
         subviews,
         view_controller,
+        tag: _,
         clears_context_before_drawing: _,
         user_interaction_enabled: _,
         multiple_touch_enabled: _,
@@ -538,6 +603,26 @@ pub const CLASSES: ClassExports = objc_classes! {
     let this_layer = env.objc.borrow::<UIViewHostObject>(this).layer;
     let other_layer = env.objc.borrow::<UIViewHostObject>(other).layer;
     msg![env; this_layer convertPoint:point toLayer:other_layer]
+}
+
+- (CGRect)convertRect:(CGRect)rect
+             fromView:(id)other { // UIView*
+    let new_origin: CGPoint = msg![env; this convertPoint:(rect.origin) fromView:other];
+    // Size is preserved
+    CGRect {
+        origin: new_origin,
+        size: rect.size
+    }
+}
+
+- (CGRect)convertRect:(CGRect)rect
+               toView:(id)other { // UIView*
+    let new_origin: CGPoint = msg![env; this convertPoint:(rect.origin) toView:other];
+    // Size is preserved
+    CGRect {
+        origin: new_origin,
+        size: rect.size
+    }
 }
 
 - (())setAutoresizingMask:(NSUInteger)mask {

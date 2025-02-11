@@ -28,6 +28,7 @@ use crate::objc::{
     NSZonePtr, ObjC,
 };
 use crate::{fs, Environment};
+use encoding_rs::SHIFT_JIS;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Write;
@@ -38,6 +39,7 @@ use yore::code_pages::CP1252;
 pub type NSStringEncoding = NSUInteger;
 pub const NSASCIIStringEncoding: NSUInteger = 1;
 pub const NSUTF8StringEncoding: NSUInteger = 4;
+pub const NSShiftJISStringEncoding: NSUInteger = 8;
 pub const NSUnicodeStringEncoding: NSUInteger = 10;
 pub const NSWindowsCP1252StringEncoding: NSUInteger = 12;
 pub const NSMacOSRomanStringEncoding: NSUInteger = 30;
@@ -110,8 +112,16 @@ impl StringHostObject {
                 StringHostObject::Utf8(Cow::Owned(string))
             }
             NSWindowsCP1252StringEncoding => {
+                // TODO: use encoding_rs
                 let string = CP1252.decode(&bytes).to_string();
                 StringHostObject::Utf8(Cow::Owned(string))
+            }
+            NSShiftJISStringEncoding => {
+                let (cow, encoding_used, had_errors) = SHIFT_JIS.decode(&bytes);
+                assert_eq!(encoding_used, SHIFT_JIS);
+                assert!(!had_errors);
+                log_dbg!("ShiftJIS decoded {:?}", cow);
+                StringHostObject::Utf8(Cow::Owned(cow.to_string()))
             }
             NSUTF16StringEncoding
             | NSUTF16BigEndianStringEncoding
@@ -184,7 +194,7 @@ enum CodeUnitIterator<'a> {
     Utf8(std::str::EncodeUtf16<'a>),
     Utf16(std::slice::Iter<'a, u16>),
 }
-impl<'a> Iterator for CodeUnitIterator<'a> {
+impl Iterator for CodeUnitIterator<'_> {
     type Item = u16;
 
     fn next(&mut self) -> Option<u16> {
@@ -194,7 +204,7 @@ impl<'a> Iterator for CodeUnitIterator<'a> {
         }
     }
 }
-impl<'a> Clone for CodeUnitIterator<'a> {
+impl Clone for CodeUnitIterator<'_> {
     fn clone(&self) -> Self {
         match self {
             CodeUnitIterator::Utf8(iter) => CodeUnitIterator::Utf8(iter.clone()),
@@ -202,7 +212,7 @@ impl<'a> Clone for CodeUnitIterator<'a> {
         }
     }
 }
-impl<'a> CodeUnitIterator<'a> {
+impl CodeUnitIterator<'_> {
     /// If the sequence of code units in `prefix` is a prefix of `self`,
     /// return [Some] with `self` advanced past that prefix, otherwise [None].
     fn strip_prefix(&self, prefix: &CodeUnitIterator) -> Option<Self> {
@@ -246,7 +256,7 @@ pub fn with_format(env: &mut Environment, format: id, args: VaList) -> String {
     String::from_utf8(res).unwrap()
 }
 
-fn from_rust_ordering(ordering: std::cmp::Ordering) -> NSComparisonResult {
+pub fn from_rust_ordering(ordering: std::cmp::Ordering) -> NSComparisonResult {
     match ordering {
         std::cmp::Ordering::Less => NSOrderedAscending,
         std::cmp::Ordering::Equal => NSOrderedSame,
@@ -318,6 +328,12 @@ pub const CLASSES: ClassExports = objc_classes! {
     let res = with_format(env, format, args.start());
     let res = from_rust_string(env, res);
     autorelease(env, res)
+}
+
++ (id)stringWithCharacters:(ConstPtr<unichar>)characters length:(NSUInteger)length {
+    let new: id = msg![env; this alloc];
+    let new: id = msg![env; new initWithCharacters:characters length:length];
+    autorelease(env, new)
 }
 
 + (id)pathWithComponents:(id)components {
@@ -448,7 +464,7 @@ pub const CLASSES: ClassExports = objc_classes! {
     // TODO: avoid copying
     super::hash_helper(&to_rust_string(env, this))
 }
-- (bool)isEqualTo:(id)other {
+- (bool)isEqual:(id)other {
     if this == other {
         return true;
     }
@@ -500,7 +516,7 @@ pub const CLASSES: ClassExports = objc_classes! {
     fn ascii_number(iter: &mut Peekable<CodeUnitIterator>, leftmost_digit: char) -> u32 {
         let mut num = leftmost_digit.to_digit(10).unwrap();
         while let Some(a_digit_char) = iter.next_if(
-            |&x| char::from_u32(x as u32).map_or(false, |y| y.is_ascii_digit())
+            |&x| char::from_u32(x as u32).is_some_and(|y| y.is_ascii_digit())
         ) {
             num = num * 10 + char::from_u32(a_digit_char as u32).unwrap().to_digit(10).unwrap();
         }
@@ -579,6 +595,15 @@ pub const CLASSES: ClassExports = objc_classes! {
     retain(env, this)
 }
 
+// NSMutableCopying implementation
+- (id)mutableCopyWithZone:(NSZonePtr)_zone {
+    let str_mut: id = msg_class![env; NSMutableString alloc];
+    // TODO: use `initWithString:`
+    let str_mut: id = msg![env; str_mut init];
+    () = msg![env; str_mut setString:this];
+    str_mut
+}
+
 - (bool)getCString:(MutPtr<u8>)buffer
          maxLength:(NSUInteger)buffer_size
           encoding:(NSStringEncoding)encoding {
@@ -592,7 +617,7 @@ pub const CLASSES: ClassExports = objc_classes! {
         assert!(src.as_bytes().iter().all(|byte| byte.is_ascii()));
     }
     let dest = env.mem.bytes_at_mut(buffer, buffer_size);
-    if dest.len() < src.as_bytes().len() + 1 { // include null terminator
+    if dest.len() < src.len() + 1 { // include null terminator
         return false;
     }
 
@@ -880,6 +905,12 @@ pub const CLASSES: ClassExports = objc_classes! {
     autorelease(env, new_string)
 }
 
+- (ConstPtr<u8>)fileSystemRepresentation {
+    let file_manager: id = msg_class![env; NSFileManager defaultManager];
+    // This behavior was confirmed on the iOS Simulator
+    msg![env; file_manager fileSystemRepresentationWithPath:this]
+}
+
 - (id)stringByAddingPercentEscapesUsingEncoding:(NSStringEncoding)encoding {
     assert_eq!(encoding, NSASCIIStringEncoding); // TODO: other encodings
     // TODO: implement escaping as per RFC 2396
@@ -1010,6 +1041,13 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (bool)writeToFile:(id)path // NSString*
+         atomically:(bool)use_aux_file {
+    let encoding: NSStringEncoding = msg_class![env; NSString defaultCStringEncoding];
+    let error: MutPtr<id> = Ptr::null();
+    msg![env; this writeToFile:path atomically:use_aux_file encoding:encoding error:error]
+}
+
+- (bool)writeToFile:(id)path // NSString*
          atomically:(bool)use_aux_file
            encoding:(NSStringEncoding)encoding
               error:(MutPtr<id>)error { // NSError**
@@ -1030,17 +1068,10 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (f32)floatValue {
-    let st = to_rust_string(env, this);
-    let st = st.trim_start();
-    let mut cutoff = st.len();
-    for (i, c) in st.char_indices() {
-        if !c.is_ascii_digit() && c != '.' && c != '+' && c != '-' {
-            cutoff = i;
-            break;
-        }
-    }
-    // TODO: handle over/underflow properly
-    st[..cutoff].parse().unwrap_or(0.0)
+    float_value_common(env, this)
+}
+- (f64)doubleValue {
+    float_value_common(env, this)
 }
 
 - (i32)intValue {
@@ -1203,24 +1234,26 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (id)initWithContentsOfFile:(id)path { // NSString*
+    if path == nil {
+        return nil;
+    }
     // TODO: avoid copy?
     let path = to_rust_string(env, path);
     let Ok(bytes) = env.fs.read(GuestPath::new(&path)) else {
         return nil;
     };
+    let len = bytes.len();
 
-    let encoding = if bytes[..2] == [0xFE, 0xFF] || bytes[..2] == [0xFF, 0xFE] {
+    let encoding = if len > 1 && (bytes[..2] == [0xFE, 0xFF] || bytes[..2] == [0xFF, 0xFE]) {
         NSUTF16StringEncoding
-    } else if bytes[..3] == [0xEF, 0xBB, 0xBF] {
+    } else if len > 2 && bytes[..3] == [0xEF, 0xBB, 0xBF] {
         NSUTF8StringEncoding
     } else {
         msg_class![env; NSString defaultCStringEncoding]
     };
 
     let host_object = StringHostObject::decode(Cow::Owned(bytes), encoding);
-
     *env.objc.borrow_mut(this) = host_object;
-
     this
 }
 
@@ -1260,6 +1293,14 @@ pub const CLASSES: ClassExports = objc_classes! {
         .next()
         .map(|c| matching_values.contains(c))
         .unwrap_or(false)
+}
+
+- (id)dataUsingEncoding:(NSStringEncoding)encoding
+   allowLossyConversion:(bool)lossy {
+    if lossy {
+        log!("Warning: ignoring allow lossy conversion for '{}'", to_rust_string(env, this));
+    }
+    msg![env; this dataUsingEncoding:encoding]
 }
 
 - (id)dataUsingEncoding:(NSStringEncoding)encoding {
@@ -1468,4 +1509,19 @@ fn is_match_at_position<F: Fn(u16, u16) -> bool>(
             false
         }
     })
+}
+
+/// Helper function for shared `doubleValue` and `floatValue` implementations.
+fn float_value_common<F: std::str::FromStr + Default>(env: &mut Environment, string: id) -> F {
+    let st = to_rust_string(env, string);
+    let st = st.trim_start();
+    let mut cutoff = st.len();
+    for (i, c) in st.char_indices() {
+        if !c.is_ascii_digit() && c != '.' && c != '+' && c != '-' {
+            cutoff = i;
+            break;
+        }
+    }
+    // TODO: handle over/underflow properly
+    st[..cutoff].parse().unwrap_or(Default::default())
 }

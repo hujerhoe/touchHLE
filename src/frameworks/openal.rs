@@ -20,7 +20,9 @@ use crate::mem::{ConstPtr, ConstVoidPtr, GuestUSize, MutPtr, MutVoidPtr, Ptr, Sa
 use crate::Environment;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
-use touchHLE_openal_soft_wrapper::ALC_DEVICE_SPECIFIER;
+use touchHLE_openal_soft_wrapper::{
+    ALC_DEVICE_SPECIFIER, ALC_FREQUENCY, ALC_MONO_SOURCES, ALC_STEREO_SOURCES,
+};
 
 #[derive(Default)]
 pub struct State {
@@ -97,16 +99,38 @@ fn alcGetString(
     env.mem.alloc_and_write_cstr(s.to_bytes()).cast_const()
 }
 
+const ALLOWED_CONTEXT_ATTRIBUTES: [ALCint; 3] =
+    [ALC_FREQUENCY, ALC_MONO_SOURCES, ALC_STEREO_SOURCES];
+
 fn alcCreateContext(
     env: &mut Environment,
     device: MutPtr<GuestALCdevice>,
-    attrlist: ConstPtr<i32>,
+    attr_list: ConstPtr<i32>,
 ) -> MutPtr<GuestALCcontext> {
-    assert!(attrlist.is_null()); // unimplemented
+    let attr_list_ptr: *const ALCint = if attr_list.is_null() {
+        std::ptr::null()
+    } else {
+        let mut ptr: MutPtr<i32> = attr_list.cast_mut();
+        // attribute list is NULL terminated
+        while env.mem.read(ptr) != 0 {
+            let attr = env.mem.read(ptr);
+            log_dbg!(
+                "alcCreateContext attribute {:#x} => {}",
+                attr,
+                env.mem.read(ptr + 1)
+            );
+            assert!(ALLOWED_CONTEXT_ATTRIBUTES.contains(&attr)); // TODO
+            ptr += 2;
+        }
+
+        let list_size = Ptr::to_bits(ptr) - Ptr::to_bits(attr_list);
+        let attr_list_slice = env.mem.bytes_at(attr_list.cast(), list_size);
+        attr_list_slice.as_ptr() as *const _
+    };
 
     let &host_device = State::get(env).devices.get(&device).unwrap();
 
-    let res = unsafe { al::alcCreateContext(host_device, std::ptr::null()) };
+    let res = unsafe { al::alcCreateContext(host_device, attr_list_ptr) };
     if res.is_null() {
         log_dbg!("alcCreateContext({:?}, NULL) returned NULL", device);
         return Ptr::null();
@@ -199,6 +223,10 @@ fn alcGetProcAddress(
     {
         Ptr::from_bits(ptr.addr_with_thumb_bit())
     } else {
+        if mangled_func_name == "_alcMacOSMixerOutputRate" {
+            log!("Tolerating nonexistent alcMacOSMixerOutputRate() func in alcGetProcAddress(), returning NULL.");
+            return Ptr::null();
+        }
         panic!(
             "Request for procedure address for unimplemented OpenAL function {}",
             mangled_func_name
@@ -244,6 +272,10 @@ fn alIsBuffer(_env: &mut Environment, buffer: ALuint) -> ALboolean {
 
 fn alIsSource(_env: &mut Environment, source: ALuint) -> ALboolean {
     unsafe { al::alIsSource(source) }
+}
+
+fn alEnable(_env: &mut Environment, capability: ALenum) {
+    unsafe { al::alEnable(capability) };
 }
 
 fn alListenerf(_env: &mut Environment, param: ALenum, value: ALfloat) {
@@ -556,7 +588,9 @@ fn alDopplerVelocity(env: &mut Environment, value: ALfloat) {
     // Check "A note for OpenAL library implementors regarding OpenAL 1.0" from
     // OpenAL 1.1 specs for more info
     let bundle_id = env.bundle.bundle_identifier();
-    if bundle_id.starts_with("com.zodttd.wolf3d") || bundle_id.starts_with("com.idsoftware.wolf3d")
+    if bundle_id.starts_with("com.zodttd.wolf3d")
+        || bundle_id.starts_with("com.idsoftware.wolf3d")
+        || bundle_id.starts_with("nu.r3.wolf3d")
     {
         log_dbg!("Applying game-specific hack for Wolf3D-iOS: ignoring 0.0 doppler velocity.");
         assert_eq!(value, 0.0);
@@ -601,9 +635,6 @@ fn alGetBufferf(_env: &mut Environment, _buffer: ALuint, _param: ALenum, _value:
     todo!();
 }
 fn alGetBufferi(_env: &mut Environment, _buffer: ALuint, _param: ALenum, _value: MutPtr<ALint>) {
-    todo!();
-}
-fn alEnable(_env: &mut Environment, _capability: ALenum) {
     todo!();
 }
 fn alDisable(_env: &mut Environment, _capability: ALenum) {
@@ -734,15 +765,8 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(alGetString(_)),
     export_c_func!(alIsExtensionPresent(_)),
     export_c_func!(alIsEnabled(_)),
-    export_c_func!(alListenerfv(_, _)),
-    export_c_func!(alListeneri(_, _)),
-    export_c_func!(alGetListenerf(_, _)),
-    export_c_func!(alGetListener3f(_, _, _, _)),
-    export_c_func!(alGetListenerfv(_, _)),
-    export_c_func!(alGetListeneri(_, _)),
     export_c_func!(alIsSource(_)),
     export_c_func!(alSourcePlayv(_, _)),
-    export_c_func!(alSourcePause(_)),
     export_c_func!(alSourcePausev(_, _)),
     export_c_func!(alSourceStopv(_, _)),
     export_c_func!(alSourceRewindv(_, _)),

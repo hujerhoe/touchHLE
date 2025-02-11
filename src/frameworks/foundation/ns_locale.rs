@@ -7,7 +7,8 @@
 
 use super::{ns_array, ns_string};
 use crate::dyld::{ConstantExports, HostConstant};
-use crate::objc::{id, objc_classes, ClassExports, HostObject};
+use crate::frameworks::core_foundation::cf_locale::kCFLocaleCountryCode;
+use crate::objc::{id, nil, objc_classes, release, retain, ClassExports, HostObject, NSZonePtr};
 use crate::options::Options;
 use crate::Environment;
 use std::ffi::CStr;
@@ -22,6 +23,7 @@ pub const CONSTANTS: ConstantExports = &[(
 #[derive(Default)]
 pub struct State {
     current_locale: Option<id>,
+    system_locale: Option<id>,
     preferred_languages: Option<id>,
 }
 impl State {
@@ -108,6 +110,7 @@ fn get_preferred_countries() -> Vec<String> {
 }
 
 struct NSLocaleHostObject {
+    /// `NSString*`
     country_code: id,
 }
 impl HostObject for NSLocaleHostObject {}
@@ -153,12 +156,44 @@ pub const CLASSES: ClassExports = objc_classes! {
     }
 }
 
++ (id)systemLocale {
+    if let Some(locale) = State::get(env).system_locale {
+        locale
+    } else {
+        let host_object = NSLocaleHostObject {
+            // Was confirmed on the iOS Simulator
+            country_code: nil,
+        };
+        let new_locale = env.objc.alloc_object(
+            this,
+            Box::new(host_object),
+            &mut env.mem
+        );
+        State::get(env).system_locale = Some(new_locale);
+        new_locale
+    }
+}
+
 // TODO: constructors, more accessors
+
+- (())dealloc {
+    let host_obj = env.objc.borrow::<NSLocaleHostObject>(this);
+    release(env, host_obj.country_code);
+    env.objc.dealloc_object(this, &mut env.mem)
+}
+
+// NSCopying implementation
+- (id)copyWithZone:(NSZonePtr)_zone {
+    retain(env, this)
+}
 
 - (id)objectForKey:(id)key {
     let key_str: &str = &ns_string::to_rust_string(env, key);
     match key_str {
-        NSLocaleCountryCode => {
+        // Note: this is not the cleanest separation between NS and CF parts
+        // But it does work on the iOS Simulator
+        // TODO: Define NSLocaleCountryCode _as_ kCFLocaleCountryCode
+        NSLocaleCountryCode | kCFLocaleCountryCode => {
             let &NSLocaleHostObject { country_code } = env.objc.borrow(this);
             country_code
         },

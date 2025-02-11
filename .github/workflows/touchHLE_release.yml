@@ -48,12 +48,14 @@ jobs:
       - name: Test
         run: cargo test --target x86_64-apple-darwin
       - name: Build
-        run: cargo build --target x86_64-apple-darwin --release && mv target/x86_64-apple-darwin/release/touchHLE .
-      - uses: actions/upload-artifact@v3
+        run: cargo build --target x86_64-apple-darwin --release
+      - name: Create .app bundle
+        run: cd dev-scripts && ./make-macos-bundle.sh ../target/x86_64-apple-darwin/release/touchHLE && mkdir touchHLE-dmg-src && mv touchHLE.app touchHLE-dmg-src/ && hdiutil create -volname touchHLE -srcfolder touchHLE-dmg-src touchHLE.dmg && mv touchHLE.dmg ..
+      - uses: actions/upload-artifact@v4
         with:
           name: touchHLE_macOS_x86_64
-          path: touchHLE
-      - uses: actions/upload-artifact@v3
+          path: touchHLE.dmg
+      - uses: actions/upload-artifact@v4
         with:
           name: TestApp_built_on_macOS
           path: tests/TestApp.app
@@ -78,7 +80,7 @@ jobs:
         key: boost_1_81_0
     - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
       name: Download Boost
-      run: curl -L -o boost_1_81_0.7z "https://boostorg.jfrog.io/artifactory/main/release/1.81.0/source/boost_1_81_0.7z"
+      run: curl -L -o boost_1_81_0.7z "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z"
     - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
       name: Extract Boost
       run: 7z -ovendor x boost_1_81_0.7z && mv vendor/boost_1_81_0 vendor/boost
@@ -111,7 +113,7 @@ jobs:
       run: curl -L -o android-ndk-r25c-linux.zip "https://dl.google.com/android/repository/android-ndk-r25c-linux.zip"
     - if: ${{ steps.cache-android-ndk.outputs.cache-hit != 'true' }}
       name: Extract Android NDK
-      run: 7z -oandroid-ndk x android-ndk-r25c-linux.zip
+      run: 7z -snld -oandroid-ndk x android-ndk-r25c-linux.zip
     - name: Link Android NDK
       run: ln -s $PWD'/android-ndk/android-ndk-r25c' $ANDROID_SDK_ROOT'/ndk/25.2.9519653'
     # Why isn't there a command for this?
@@ -130,7 +132,7 @@ jobs:
       env:
         # The version should match the ndkVersion defined in `android\app\build.gradle`
         ANDROID_NDK_ROOT: '/usr/local/lib/android/sdk/ndk/25.2.9519653'
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: touchHLE_Android_AArch64
         path: touchHLE.apk
@@ -157,7 +159,7 @@ jobs:
         key: boost_1_81_0
     - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
       name: Download Boost
-      run: curl -L -o boost_1_81_0.7z "https://boostorg.jfrog.io/artifactory/main/release/1.81.0/source/boost_1_81_0.7z"
+      run: curl -L -o boost_1_81_0.7z "https://archives.boost.io/release/1.81.0/source/boost_1_81_0.7z"
     - if: ${{ steps.cache-boost.outputs.cache-hit != 'true' }}
       name: Extract Boost
       run: 7z -ovendor x boost_1_81_0.7z && ren vendor\boost_1_81_0 boost
@@ -183,11 +185,11 @@ jobs:
       run: cargo test
     - name: Build
       run: cargo build --release && move target/release/touchHLE.exe .
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: touchHLE_Windows_x86_64
         path: touchHLE.exe
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: TestApp_built_on_Windows
         path: tests/TestApp.app

@@ -218,8 +218,16 @@ pub fn read(
         return -1;
     }
 
-    // TODO: error handling for unknown fd?
-    let file = env.libc_state.posix_io.file_for_fd(fd).unwrap();
+    let Some(file) = env.libc_state.posix_io.file_for_fd(fd) else {
+        log!(
+            "Warning: read({:?}, {:?}, {:#x}) called with unknown fd, returning -1",
+            fd,
+            buffer,
+            size,
+        );
+        // TODO: set errno
+        return -1;
+    };
 
     let buffer_slice = env.mem.bytes_at_mut(buffer.cast(), size);
     match file.file.read(buffer_slice) {
@@ -352,8 +360,11 @@ pub fn lseek(env: &mut Environment, fd: FileDescriptor, offset: off_t, whence: i
     // TODO: handle errno properly
     set_errno(env, 0);
 
-    // TODO: error handling for unknown fd?
-    let file = env.libc_state.posix_io.file_for_fd(fd).unwrap();
+    let Some(file) = env.libc_state.posix_io.file_for_fd(fd) else {
+        log_dbg!("lseek({:?}, {:#x}, {}) => {}", fd, offset, whence, -1);
+        // TODO: set errno
+        return -1;
+    };
 
     let from = match whence {
         // not sure whether offset is treated as signed or unsigned when using
@@ -383,9 +394,22 @@ pub fn close(env: &mut Environment, fd: FileDescriptor) -> i32 {
     // TODO: handle errno properly
     set_errno(env, 0);
 
-    // TODO: error handling for unknown fd?
-    if fd < 0 || matches!(fd, STDOUT_FILENO | STDERR_FILENO) {
+    if matches!(fd, STDIN_FILENO | STDOUT_FILENO | STDERR_FILENO) {
+        log_dbg!("close({:?}) => 0", fd);
         return 0;
+    }
+
+    if fd < 0
+        || env
+            .libc_state
+            .posix_io
+            .files
+            .get(fd_to_file_idx(fd))
+            .is_none()
+    {
+        set_errno(env, EBADF);
+        log!("Warning: close({:?}) failed, returning -1", fd);
+        return -1;
     }
 
     let result = match env.libc_state.posix_io.files[fd_to_file_idx(fd)].take() {
@@ -413,7 +437,7 @@ pub fn close(env: &mut Environment, fd: FileDescriptor) -> i32 {
             }
         }
         None => {
-            // TODO: set errno
+            set_errno(env, EBADF);
             -1
         }
     };
@@ -432,11 +456,12 @@ fn rename(env: &mut Environment, old: ConstPtr<u8>, new: ConstPtr<u8>) -> i32 {
 
     let old = env.mem.cstr_at_utf8(old).unwrap();
     let new = env.mem.cstr_at_utf8(new).unwrap();
-    log_dbg!("rename('{}', '{}')", old, new);
-    match env.fs.rename(GuestPath::new(&old), GuestPath::new(&new)) {
+    let res = match env.fs.rename(GuestPath::new(&old), GuestPath::new(&new)) {
         Ok(_) => 0,
         Err(_) => -1,
-    }
+    };
+    log_dbg!("rename('{}', '{}') => {}", old, new, res);
+    res
 }
 
 pub fn getcwd(env: &mut Environment, buf_ptr: MutPtr<u8>, buf_size: GuestUSize) -> MutPtr<u8> {

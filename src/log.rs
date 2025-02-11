@@ -24,7 +24,10 @@ pub unsafe fn setup_log_file() {
 /// Only for internal use by the logging macros.
 #[cfg(target_os = "android")]
 pub fn get_log_file() -> &'static std::fs::File {
-    unsafe { LOG_FILE.as_ref().unwrap() }
+    #[allow(static_mut_refs)]
+    unsafe {
+        LOG_FILE.as_ref().unwrap()
+    }
 }
 
 /// Prints a log message unconditionally. Use this for errors or warnings.
@@ -84,4 +87,8 @@ macro_rules! echo {
 
 /// Put modules to enable [log_dbg] for here, e.g. "touchHLE::mem" to see when
 /// memory is allocated and freed.
-pub const ENABLED_MODULES: &[&str] = &[];
+pub const ENABLED_MODULES: &[&str] = &[
+    "touchHLE::frameworks::audio_toolbox::audio_unit",
+    "touchHLE::frameworks::audio_toolbox::audio_session",
+    "touchHLE::frameworks::audio_toolbox::audio_components",
+];

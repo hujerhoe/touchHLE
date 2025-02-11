@@ -8,8 +8,9 @@
 use crate::dyld::{export_c_func, FunctionExports};
 use crate::fs::GuestPath;
 use crate::libc::errno::set_errno;
+use crate::libc::mach_host::PAGE_SIZE;
 use crate::libc::posix_io::{FileDescriptor, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
-use crate::mem::ConstPtr;
+use crate::mem::{ConstPtr, GuestUSize, MutPtr};
 use crate::Environment;
 use std::time::Duration;
 
@@ -36,7 +37,7 @@ fn usleep(env: &mut Environment, useconds: useconds_t) -> i32 {
 }
 
 #[allow(non_camel_case_types)]
-type pid_t = i32;
+pub type pid_t = i32;
 
 fn getpid(_env: &mut Environment) -> pid_t {
     // Not a real value, since touchHLE only simulates a single process.
@@ -90,11 +91,38 @@ fn unlink(env: &mut Environment, path: ConstPtr<u8>) -> i32 {
     // TODO: handle errno properly
     set_errno(env, 0);
 
-    log!(
-        "TODO: unlink('{}') => -1",
-        env.mem.cstr_at_utf8(path).unwrap()
-    );
-    -1
+    log_dbg!("unlink({:?} '{:?}')", path, env.mem.cstr_at_utf8(path));
+
+    let path_str = env.mem.cstr_at_utf8(path).unwrap();
+    let guest_path = GuestPath::new(&path_str);
+    match env.fs.remove(guest_path) {
+        Ok(()) => 0,
+        Err(_) => {
+            log!(
+                "unlink({:?} '{:?}') failed",
+                path,
+                env.mem.cstr_at_utf8(path)
+            );
+            -1
+        }
+    }
+}
+
+fn gethostname(env: &mut Environment, name: MutPtr<u8>, namelen: GuestUSize) -> i32 {
+    // TODO: define unique hostname once networking is supported
+    let hostname = "touchHLE";
+    let len: GuestUSize = hostname.len().try_into().unwrap();
+    // TODO: check against HOST_NAME_MAX
+    assert!(namelen > len);
+    env.mem
+        .bytes_at_mut(name, len)
+        .copy_from_slice(hostname.as_bytes());
+    env.mem.write(name + len, b'\0');
+    0 // Success
+}
+
+fn getpagesize(_env: &mut Environment) -> i32 {
+    PAGE_SIZE.try_into().unwrap()
 }
 
 pub const FUNCTIONS: FunctionExports = &[
@@ -105,4 +133,6 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(isatty(_)),
     export_c_func!(access(_, _)),
     export_c_func!(unlink(_)),
+    export_c_func!(gethostname(_, _)),
+    export_c_func!(getpagesize()),
 ];

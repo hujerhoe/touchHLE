@@ -7,9 +7,10 @@
 
 use super::ns_enumerator::{fast_enumeration_helper, NSFastEnumerationState};
 use super::ns_property_list_serialization::deserialize_plist_from_file;
-use super::{ns_keyed_unarchiver, ns_string, ns_url, NSNotFound, NSUInteger};
+use super::{ns_keyed_unarchiver, ns_string, ns_url, NSInteger, NSNotFound, NSUInteger};
+use crate::abi::{CallFromHost, GuestFunction};
 use crate::fs::GuestPath;
-use crate::mem::MutPtr;
+use crate::mem::{MutPtr, MutVoidPtr};
 use crate::objc::{
     autorelease, id, msg, msg_class, nil, objc_classes, release, retain, ClassExports, HostObject,
     NSZonePtr,
@@ -75,6 +76,12 @@ pub const CLASSES: ClassExports = objc_classes! {
     let res = deserialize_plist_from_file(env, &path, /* array_expected: */ true);
     autorelease(env, res)
 }
++ (id)arrayWithObject:(id)object {
+    retain(env, object);
+    let objects = vec![object];
+    let array = from_vec(env, objects);
+    autorelease(env, array)
+}
 + (id)arrayWithObjects:(id)firstObj, ...args {
     retain(env, firstObj);
     let mut objects = vec![firstObj];
@@ -123,6 +130,10 @@ pub const CLASSES: ClassExports = objc_classes! {
     }
     NSNotFound as NSUInteger
 }
+- (bool)containsObject:(id)object {
+    let idx: NSUInteger = msg![env; this indexOfObject:object];
+    idx != NSNotFound as NSUInteger
+}
 
 - (id)firstObject {
     let size: NSUInteger = msg![env; this count];
@@ -138,6 +149,26 @@ pub const CLASSES: ClassExports = objc_classes! {
         return nil;
     }
     msg![env; this objectAtIndex:(size - 1)]
+}
+
+- (id)componentsJoinedByString:(id)str { // NSString *
+    let res: id = msg_class![env; NSMutableString new];
+    let count: NSUInteger = msg![env; this count];
+    if count == 0 {
+        autorelease(env, res);
+        return res;
+    }
+    for i in 0..count {
+        let curr_object: id = msg![env; this objectAtIndex:i];
+        let curr_desc: id = msg![env; curr_object description];
+        () = msg![env; res appendString:curr_desc];
+        if i != count-1 {
+            () = msg![env; res appendString:str];
+        }
+    }
+    let res_imm = msg![env; res copy];
+    release(env, res);
+    autorelease(env, res_imm)
 }
 
 @end
@@ -238,6 +269,22 @@ pub const CLASSES: ClassExports = objc_classes! {
     this
 }
 
+- (id)initWithObjects:(id)firstObj, ...args {
+    retain(env, firstObj);
+    let mut objects = vec![firstObj];
+    let mut varargs = args.start();
+    loop {
+        let next_arg: id = varargs.next(env);
+        if next_arg.is_null() {
+            break;
+        }
+        retain(env, next_arg);
+        objects.push(next_arg);
+    }
+    env.objc.borrow_mut::<ArrayHostObject>(this).array = objects;
+    this
+}
+
 - (())dealloc {
     let host_object: &mut ArrayHostObject = env.objc.borrow_mut(this);
     let array = std::mem::take(&mut host_object.array);
@@ -252,13 +299,22 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (id)objectEnumerator { // NSEnumerator*
     object_enumerator_inner(env, this)
 }
+- (id)reverseObjectEnumerator { // NSEnumerator*
+    reverse_object_enumerator_inner(env, this)
+}
 
 // NSFastEnumeration implementation
 - (NSUInteger)countByEnumeratingWithState:(MutPtr<NSFastEnumerationState>)state
                                   objects:(MutPtr<id>)stackbuf
                                     count:(NSUInteger)len {
-    let mut iterator = env.objc.borrow_mut::<ArrayHostObject>(this).array.iter().copied();
-    fast_enumeration_helper(&mut env.mem, this, &mut iterator, state, stackbuf, len)
+    let count: NSUInteger = msg![env; this count];
+    fast_enumeration_helper(env, this, |env, idx| {
+        if idx < count {
+            msg![env; this objectAtIndex:idx]
+        } else {
+            nil
+        }
+    }, state, stackbuf, len)
 }
 
 // TODO: more init methods, etc
@@ -313,6 +369,11 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.alloc_object(this, host_object, &mut env.mem)
 }
 
+- (id)initWithCapacity:(NSUInteger)capacity {
+    env.objc.borrow_mut::<ArrayHostObject>(this).array.reserve(capacity as usize);
+    this
+}
+
 // NSCoding implementation
 - (id)initWithCoder:(id)coder {
     let objects = ns_keyed_unarchiver::decode_current_array(env, coder);
@@ -322,9 +383,15 @@ pub const CLASSES: ClassExports = objc_classes! {
     this
 }
 
-- (id)initWithCapacity:(NSUInteger)_capacity {
-    // TODO: capacity
-    msg![env; this init]
+// NSMutableCopying implementation
+- (id)mutableCopyWithZone:(NSZonePtr)_zone {
+    let mut_arr: id = msg_class![env; NSMutableArray alloc];
+    let array = env.objc.borrow::<ArrayHostObject>(this).array.clone();
+    for &object in &array {
+        retain(env, object);
+    }
+    env.objc.borrow_mut::<ArrayHostObject>(this).array = array;
+    mut_arr
 }
 
 - (())dealloc {
@@ -341,12 +408,35 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (id)objectEnumerator { // NSEnumerator*
     object_enumerator_inner(env, this)
 }
+- (id)reverseObjectEnumerator { // NSEnumerator*
+    reverse_object_enumerator_inner(env, this)
+}
 
-// TODO: init methods etc
+- (())sortUsingFunction:(GuestFunction)comparator
+                context:(MutVoidPtr)context {
+    let host_object: &mut ArrayHostObject = env.objc.borrow_mut(this);
+    let mut array = std::mem::take(&mut host_object.array);
+    array.sort_by(|&a, &b| {
+        let res: NSInteger = comparator.call_from_host(env, (a, b, context));
+        res.cmp(&0)
+    });
 
-- (id)initWithCapacity:(NSUInteger)numItems {
-    env.objc.borrow_mut::<ArrayHostObject>(this).array.reserve(numItems as usize);
-    this
+    env.objc.borrow_mut::<ArrayHostObject>(this).array = array;
+}
+
+// NSFastEnumeration implementation
+- (NSUInteger)countByEnumeratingWithState:(MutPtr<NSFastEnumerationState>)state
+                                  objects:(MutPtr<id>)stackbuf
+                                    count:(NSUInteger)len {
+    // TODO: check that array wasn't mutated!
+    let count: NSUInteger = msg![env; this count];
+    fast_enumeration_helper(env, this, |env, idx| {
+        if idx < count {
+            msg![env; this objectAtIndex:idx]
+        } else {
+            nil
+        }
+    }, state, stackbuf, len)
 }
 
 - (NSUInteger)count {
@@ -453,6 +543,23 @@ fn build_description(env: &mut Environment, arr: id) -> id {
 fn object_enumerator_inner(env: &mut Environment, arr: id) -> id {
     let array_host_object: &mut ArrayHostObject = env.objc.borrow_mut(arr);
     let vec = array_host_object.array.to_vec();
+    object_enumerator_inner_helper(env, arr, vec)
+}
+
+/// A shared reverseObjectEnumerator helper method.
+fn reverse_object_enumerator_inner(env: &mut Environment, arr: id) -> id {
+    let array_host_object: &mut ArrayHostObject = env.objc.borrow_mut(arr);
+    // TODO: avoid copying?
+    let vec = array_host_object
+        .array
+        .iter()
+        .rev()
+        .cloned()
+        .collect::<Vec<_>>();
+    object_enumerator_inner_helper(env, arr, vec)
+}
+
+fn object_enumerator_inner_helper(env: &mut Environment, arr: id, vec: Vec<id>) -> id {
     let host_object = Box::new(ObjectEnumeratorHostObject {
         array: arr,
         iterator: vec.into_iter(),

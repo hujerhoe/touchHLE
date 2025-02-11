@@ -13,6 +13,7 @@ use crate::frameworks::uikit::ui_font::{
     UILineBreakModeTailTruncation, UITextAlignment, UITextAlignmentLeft,
 };
 use crate::frameworks::uikit::ui_graphics::UIGraphicsGetCurrentContext;
+use crate::frameworks::uikit::ui_view::ui_control::ui_text_field::UIReturnKeyType;
 use crate::objc::{
     id, impl_HostObject_with_superclass, msg, msg_class, msg_super, nil, objc_classes, release,
     retain, ClassExports, NSZonePtr,
@@ -76,13 +77,20 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.alloc_object(this, host_object, &mut env.mem)
 }
 
+- (id)initWithFrame:(CGRect)frame {
+    let this: id = msg_super![env; this initWithFrame:frame];
+    // TODO: refactor to a common init with `initWithCoder:`
+    // These aren't redundant, the setters fetch the real defaults.
+    () = msg![env; this setFont:nil];
+    () = msg![env; this setTextColor:nil];
+    this
+}
+
 - (id)initWithCoder:(id)coder {
     let this: id = msg_super![env; this initWithCoder:coder];
     // These aren't redundant, the setters fetch the real defaults.
     () = msg![env; this setFont:nil];
     () = msg![env; this setTextColor:nil];
-    // TODO: support background color
-    //() = msg![env; this setBackgroundColor:nil];
     this
 }
 
@@ -119,7 +127,7 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 - (())setTextColor:(id)new_text_color { // UIColor*
     let new_text_color: id = if new_text_color == nil {
-        msg_class![env; UIColor whiteColor]
+        msg_class![env; UIColor blackColor]
     } else {
         new_text_color
     };
@@ -157,7 +165,10 @@ pub const CLASSES: ClassExports = objc_classes! {
     release(env, old_font);
     update_scroll(env,this);
     () = msg![env; this setNeedsDisplay];
+}
 
+- (())flashScrollIndicators {
+    // TODO
 }
 
 // TODO: Make editable actually do something
@@ -166,6 +177,10 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 - (())setEditable:(bool)editable {
     env.objc.borrow_mut::<UITextViewHostObject>(this).editable = editable;
+}
+
+- (())setReturnKeyType:(UIReturnKeyType)type_ {
+    log!("TODO: setReturnKeyType:{}", type_);
 }
 
 - (())drawRect:(CGRect)_rect {

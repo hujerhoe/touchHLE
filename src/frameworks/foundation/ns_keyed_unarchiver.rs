@@ -18,7 +18,7 @@ use crate::frameworks::foundation::{NSInteger, NSUInteger};
 use crate::frameworks::uikit::ui_geometry::{
     CGPointFromString, CGRectFromString, CGSizeFromString,
 };
-use crate::mem::ConstVoidPtr;
+use crate::mem::{ConstVoidPtr, GuestUSize, MutVoidPtr};
 use crate::objc::{
     autorelease, id, msg, msg_class, nil, objc_classes, release, retain, ClassExports, HostObject,
     NSZonePtr,
@@ -39,6 +39,8 @@ struct NSKeyedUnarchiverHostObject {
     current_key: Option<Uid>,
     /// linear map of Uid => id
     already_unarchived: Vec<Option<id>>,
+    /// Something responding to NSKeyedUnarchiverDelegate
+    delegate: id,
 }
 impl HostObject for NSKeyedUnarchiverHostObject {}
 
@@ -53,6 +55,7 @@ pub const CLASSES: ClassExports = objc_classes! {
         plist: Dictionary::new(),
         current_key: None,
         already_unarchived: Vec::new(),
+        delegate: nil
     });
     env.objc.alloc_object(this, unarchiver, &mut env.mem)
 }
@@ -113,6 +116,16 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.dealloc_object(this, &mut env.mem)
 }
 
+// TODO: implement calls to delegate methods
+// weak/non-retaining
+- (())setDelegate:(id)delegate { // id<NSKeyedUnarchiverDelegate>
+    let host_object = env.objc.borrow_mut::<NSKeyedUnarchiverHostObject>(this);
+    host_object.delegate = delegate;
+}
+- (id)delegate {
+    env.objc.borrow::<NSKeyedUnarchiverHostObject>(this).delegate
+}
+
 // These methods drive most of the decoding. They get called in two cases:
 // - By the code that initiates the unarchival, e.g. UINib, to retrieve
 //   top-level objects.
@@ -122,10 +135,8 @@ pub const CLASSES: ClassExports = objc_classes! {
 // if the key is unknown.
 
 - (bool)decodeBoolForKey:(id)key { // NSString *
-    get_value_to_decode_for_key(env, this, key).map_or(
-        false,
-        |value| value.as_boolean().unwrap()
-    )
+    get_value_to_decode_for_key(env, this, key)
+        .is_some_and(|value| value.as_boolean().unwrap())
 }
 
 - (f64)decodeDoubleForKey:(id)key { // NSString *
@@ -184,6 +195,11 @@ pub const CLASSES: ClassExports = objc_classes! {
     // on behalf of the caller
     retain(env, object);
     autorelease(env, object)
+}
+
+- (bool)containsValueForKey:(id)key { // NSString*
+    assert!(key != nil);
+    get_value_to_decode_for_key(env, this, key).is_some()
 }
 
 // TODO: add more decode methods
@@ -284,6 +300,22 @@ fn unarchive_key(env: &mut Environment, unarchiver: id, key: Uid) -> id {
             let s = s.to_string();
             from_rust_string(env, s)
         }
+        Value::Integer(int) => {
+            #[allow(clippy::clone_on_copy)]
+            let int = int.clone();
+            // Similar logic to deserialize_plist()
+            let number: id = msg_class![env; NSNumber alloc];
+            // TODO: is this the correct order of preference? does it matter?
+            if let Some(int64) = int.as_signed() {
+                let longlong: i64 = int64;
+                msg![env; number initWithLongLong:longlong]
+            } else if let Some(uint64) = int.as_unsigned() {
+                let ulonglong: u64 = uint64;
+                msg![env; number initWithUnsignedLongLong:ulonglong]
+            } else {
+                unreachable!(); // according to plist crate docs
+            }
+        }
         _ => unimplemented!("Unarchive: {:#?}", item),
     };
 
@@ -296,17 +328,7 @@ fn unarchive_key(env: &mut Environment, unarchiver: id, key: Uid) -> id {
 ///
 /// The objects are to be considered retained by the `Vec`.
 pub fn decode_current_array(env: &mut Environment, unarchiver: id) -> Vec<id> {
-    let keys: Vec<Uid> = {
-        let host_obj = borrow_host_obj(env, unarchiver);
-        let objects = host_obj.plist["$objects"].as_array().unwrap();
-        let item = &objects[host_obj.current_key.unwrap().get() as usize];
-        let keys = item.as_dictionary().unwrap()["NS.objects"]
-            .as_array()
-            .unwrap();
-        keys.iter()
-            .map(|value| value.as_uid().copied().unwrap())
-            .collect()
-    };
+    let keys = keys_for_key(env, unarchiver, "NS.objects");
 
     keys.into_iter()
         .map(|key| {
@@ -314,5 +336,68 @@ pub fn decode_current_array(env: &mut Environment, unarchiver: id) -> Vec<id> {
             // object is retained by the Vec
             retain(env, new_object)
         })
+        .collect()
+}
+
+/// Shortcut for use by `[_touchHLE_NSMutableDictionary initWithCoder:]`.
+///
+/// Similar to `decode_current_array`, but for dictionaries.
+/// The keys and objects are not retained!
+pub fn decode_current_dict(env: &mut Environment, unarchiver: id) -> Vec<(id, id)> {
+    let keys = keys_for_key(env, unarchiver, "NS.keys");
+    let vals = keys_for_key(env, unarchiver, "NS.objects");
+    log_dbg!("decode_current_dict: keys {:?}, vals {:?}", keys, vals);
+
+    let keys: Vec<id> = keys
+        .into_iter()
+        .map(|key| unarchive_key(env, unarchiver, key))
+        .collect();
+    let vals: Vec<id> = vals
+        .into_iter()
+        .map(|val| unarchive_key(env, unarchiver, val))
+        .collect();
+
+    keys.into_iter().zip(vals).collect()
+}
+
+/// Shortcut for use by `[NSDate initWithCoder:]`.
+pub fn decode_current_date(env: &mut Environment, unarchiver: id) -> id {
+    let key = get_static_str(env, "NS.time");
+    let timestamp = get_value_to_decode_for_key(env, unarchiver, key)
+        .unwrap()
+        .as_real()
+        .unwrap();
+
+    let date: id = msg_class![env; NSDate alloc];
+    msg![env; date initWithTimeIntervalSinceReferenceDate:timestamp]
+}
+
+/// Shortcut for use by `[NSData initWithCoder:]`.
+pub fn decode_current_data(env: &mut Environment, unarchiver: id, is_mutable: bool) -> id {
+    let key = get_static_str(env, "NS.data");
+    // TODO: avoid copying (twice!)
+    let bytes = get_value_to_decode_for_key(env, unarchiver, key)
+        .unwrap()
+        .as_data()
+        .unwrap()
+        .to_vec();
+    let len: GuestUSize = bytes.len().try_into().unwrap();
+    let guest_bytes: MutVoidPtr = env.mem.alloc(len);
+    env.mem
+        .bytes_at_mut(guest_bytes.cast(), len)
+        .copy_from_slice(bytes.as_slice());
+
+    assert!(is_mutable); // TODO
+    let data: id = msg_class![env; NSMutableData alloc];
+    msg![env; data initWithBytesNoCopy:guest_bytes length:len freeWhenDone:true]
+}
+
+fn keys_for_key(env: &mut Environment, unarchiver: id, key: &str) -> Vec<Uid> {
+    let host_obj = borrow_host_obj(env, unarchiver);
+    let objects = host_obj.plist["$objects"].as_array().unwrap();
+    let item = &objects[host_obj.current_key.unwrap().get() as usize];
+    let keys = item.as_dictionary().unwrap()[key].as_array().unwrap();
+    keys.iter()
+        .map(|value| value.as_uid().copied().unwrap())
         .collect()
 }

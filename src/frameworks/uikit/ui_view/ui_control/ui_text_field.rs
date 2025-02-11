@@ -10,7 +10,9 @@
 
 use sdl2_sys::{SDL_StartTextInput, SDL_StopTextInput};
 
+use crate::dyld::{ConstantExports, HostConstant};
 use crate::frameworks::core_graphics::CGRect;
+use crate::frameworks::foundation::ns_string::to_rust_string;
 use crate::frameworks::foundation::{ns_string, NSInteger, NSRange, NSUInteger};
 use crate::frameworks::uikit::ui_font::UITextAlignmentLeft;
 use crate::frameworks::uikit::ui_view::ui_window::{
@@ -25,9 +27,18 @@ use crate::Environment;
 
 type UIKeyboardAppearance = NSInteger;
 type UIKeyboardType = NSInteger;
-type UIReturnKeyType = NSInteger;
+pub type UIReturnKeyType = NSInteger;
 type UITextAutocapitalizationType = NSInteger;
 type UITextAutocorrectionType = NSInteger;
+
+// TODO: Actually send notification on text change
+const UITextFieldTextDidChangeNotification: &str = "UITextFieldTextDidChangeNotification";
+
+/// `NSNotificationName` values.
+pub const CONSTANTS: ConstantExports = &[(
+    "_UITextFieldTextDidChangeNotification",
+    HostConstant::NSString(UITextFieldTextDidChangeNotification),
+)];
 
 struct UITextFieldHostObject {
     superclass: super::UIControlHostObject,
@@ -145,6 +156,10 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (())setSecureTextEntry:(bool)secure {
     log!("TODO: setSecureTextEntry:{}", secure);
+}
+
+- (())setPlaceholder:(id)placeholder { // NSString*
+    log!("TODO: setPlaceholder:'{}'", to_rust_string(env, placeholder));
 }
 
 // weak/non-retaining

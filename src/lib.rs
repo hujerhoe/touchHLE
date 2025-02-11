@@ -61,24 +61,7 @@ use environment::{Environment, MutexId, MutexType, ThreadId, PTHREAD_MUTEX_DEFAU
 
 use std::path::PathBuf;
 
-/// Current version. See `build.rs` for how this is generated.
-const VERSION: &str = include_str!(concat!(env!("OUT_DIR"), "/version.txt"));
-// Environment variables set by GitHub Actions
-const GITHUB_REPOSITORY: Option<&str> = option_env!("GITHUB_REPOSITORY");
-const GITHUB_SERVER_URL: Option<&str> = option_env!("GITHUB_SERVER_URL");
-const GITHUB_RUN_ID: Option<&str> = option_env!("GITHUB_RUN_ID");
-const GITHUB_REF_NAME: Option<&str> = option_env!("GITHUB_REF_NAME");
-
-fn branding() -> &'static str {
-    if GITHUB_RUN_ID.is_none() {
-        return "";
-    }
-    if (GITHUB_REPOSITORY, GITHUB_REF_NAME) == (Some("touchHLE/touchHLE"), Some("trunk")) {
-        "PREVIEW"
-    } else {
-        "UNOFFICIAL"
-    }
-}
+pub use touchHLE_version::*;
 
 /// This is the true entry point on Android (SDLActivity calls it after
 /// initialization). On other platforms the true entry point is in src/bin.rs.
@@ -152,10 +135,8 @@ pub fn main<T: Iterator<Item = String>>(mut args: T) -> Result<(), String> {
     echo!();
 
     {
-        let base_path = paths::user_data_base_path().to_str().unwrap();
-        if !base_path.is_empty() {
-            log!("Base path for touchHLE files: {}", base_path);
-        }
+        let base_path = paths::user_data_base_path();
+        log!("Base path for touchHLE files: {}", base_path.display());
         paths::prepopulate_user_data_dir();
     }
 

@@ -15,14 +15,18 @@ use crate::Environment;
 // FIXME: Many functions in this file should theoretically set errno or affect
 //        the floating-point environment. We're hoping apps won't rely on that.
 
+fn abs(_env: &mut Environment, arg: i32) -> i32 {
+    arg.abs()
+}
+fn fabs(_env: &mut Environment, arg: f64) -> f64 {
+    arg.abs()
+}
+
 // Trigonometric functions
 
 // TODO: These should also have `long double` variants, which can probably just
 // alias the `double` ones.
 
-fn abs(_env: &mut Environment, arg: i32) -> i32 {
-    arg.abs()
-}
 fn sin(env: &mut Environment, arg: f64) -> f64 {
     // TODO: handle errno properly
     set_errno(env, 0);
@@ -272,6 +276,42 @@ fn exp2f(env: &mut Environment, arg: f32) -> f32 {
 
     arg.exp2()
 }
+fn ldexp(env: &mut Environment, arg: f64, n: i32) -> f64 {
+    // TODO: handle errno properly
+    set_errno(env, 0);
+
+    assert!(!arg.is_infinite()); // TODO
+
+    arg * 2f64.powf(n as _)
+}
+fn ldexpf(env: &mut Environment, arg: f32, n: i32) -> f32 {
+    // TODO: handle errno properly
+    set_errno(env, 0);
+
+    assert!(!arg.is_infinite()); // TODO
+
+    arg * 2f32.powf(n as _)
+}
+fn frexpf(env: &mut Environment, arg: f32, exp: MutPtr<i32>) -> f32 {
+    if arg == 0.0 {
+        env.mem.write(exp, 0);
+        return 0.0;
+    }
+    if arg < 0.0 {
+        return -frexpf(env, -arg, exp);
+    }
+    let b = arg.log2().floor() as i32 + 1;
+    env.mem.write(exp, b);
+    let frac = arg / 2f32.powi(b);
+    assert!(
+        (0.5..1.0).contains(&frac),
+        "arg {}, b {}, frac {}",
+        arg,
+        b,
+        frac
+    );
+    frac
+}
 
 // Power functions
 // TODO: implement the rest
@@ -349,6 +389,20 @@ fn modff(env: &mut Environment, val: f32, iptr: MutPtr<f32>) -> f32 {
     env.mem.write(iptr, ivalue);
     val - ivalue
 }
+fn lrint(env: &mut Environment, arg: f64) -> i32 {
+    // TODO: handle errno properly
+    set_errno(env, 0);
+
+    // As tested on both macOS and iOS Simulator, by default it
+    // rounds to the nearest integer with ties on even
+    // TODO: support other rounding modes
+    arg.max(i32::MIN as f64)
+        .min(i32::MAX as f64)
+        .round_ties_even() as i32
+}
+fn lrintf(env: &mut Environment, arg: f32) -> i32 {
+    lrint(env, arg.into())
+}
 
 // Remainder functions
 // TODO: implement the rest
@@ -382,6 +436,7 @@ fn fminf(_env: &mut Environment, arg1: f32, arg2: f32) -> f32 {
 
 pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(abs(_)),
+    export_c_func!(fabs(_)),
     // Trigonometric functions
     export_c_func!(sin(_)),
     export_c_func!(sinf(_)),
@@ -425,6 +480,9 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(expm1f(_)),
     export_c_func!(exp2(_)),
     export_c_func!(exp2f(_)),
+    export_c_func!(ldexp(_, _)),
+    export_c_func!(ldexpf(_, _)),
+    export_c_func!(frexpf(_, _)),
     // Power functions
     export_c_func!(pow(_, _)),
     export_c_func!(powf(_, _)),
@@ -440,6 +498,8 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(trunc(_)),
     export_c_func!(truncf(_)),
     export_c_func!(modff(_, _)),
+    export_c_func!(lrint(_)),
+    export_c_func!(lrintf(_)),
     // Remainder functions
     export_c_func!(fmod(_, _)),
     export_c_func!(fmodf(_, _)),

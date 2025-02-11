@@ -9,6 +9,8 @@ use super::ns_array;
 use super::ns_dictionary::DictionaryHostObject;
 use super::ns_enumerator::{fast_enumeration_helper, NSFastEnumerationState};
 use super::NSUInteger;
+use crate::abi::DotDotDot;
+use crate::environment::Environment;
 use crate::mem::MutPtr;
 use crate::objc::{
     autorelease, id, msg, msg_class, nil, objc_classes, retain, ClassExports, HostObject, NSZonePtr,
@@ -98,6 +100,11 @@ pub const CLASSES: ClassExports = objc_classes! {
     this
 }
 
+- (id)initWithObjects:(id)first_obj, ...args {
+    env.objc.borrow_mut::<SetHostObject>(this).dict = set_from_objects(env, first_obj, args);
+    this
+}
+
 - (())dealloc {
     std::mem::take(&mut env.objc.borrow_mut::<SetHostObject>(this).dict).release(env);
     env.objc.dealloc_object(this, &mut env.mem)
@@ -132,8 +139,17 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (NSUInteger)countByEnumeratingWithState:(MutPtr<NSFastEnumerationState>)state
                                   objects:(MutPtr<id>)stackbuf
                                     count:(NSUInteger)len {
-    let mut iterator = env.objc.borrow::<SetHostObject>(this).dict.iter_keys();
-    fast_enumeration_helper(&mut env.mem, this, &mut iterator, state, stackbuf, len)
+    // We assume that order in which objects are reported is consistent
+    // between calls!
+    let objects: id = msg![env; this allObjects];
+    let count: NSUInteger = msg![env; objects count];
+    fast_enumeration_helper(env, this, |env, idx| {
+        if idx < count {
+            msg![env; objects objectAtIndex:idx]
+        } else {
+            nil
+        }
+    }, state, stackbuf, len)
 }
 
 @end
@@ -157,6 +173,11 @@ pub const CLASSES: ClassExports = objc_classes! {
 
     env.objc.borrow_mut::<SetHostObject>(this).dict = dict;
 
+    this
+}
+
+- (id)initWithObjects:(id)first_obj, ...args {
+    env.objc.borrow_mut::<SetHostObject>(this).dict = set_from_objects(env, first_obj, args);
     this
 }
 
@@ -193,8 +214,18 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (NSUInteger)countByEnumeratingWithState:(MutPtr<NSFastEnumerationState>)state
                                   objects:(MutPtr<id>)stackbuf
                                     count:(NSUInteger)len {
-    let mut iterator = env.objc.borrow::<SetHostObject>(this).dict.iter_keys();
-    fast_enumeration_helper(&mut env.mem, this, &mut iterator, state, stackbuf, len)
+    // TODO: check that set wasn't mutated!
+    // We assume that order in which objects are reported is consistent
+    // between calls!
+    let objects: id = msg![env; this allObjects];
+    let count: NSUInteger = msg![env; objects count];
+    fast_enumeration_helper(env, this, |env, idx| {
+        if idx < count {
+            msg![env; objects objectAtIndex:idx]
+        } else {
+            nil
+        }
+    }, state, stackbuf, len)
 }
 
 // TODO: more mutation methods
@@ -216,6 +247,35 @@ pub const CLASSES: ClassExports = objc_classes! {
     old_host_obj.dict.release(env);
 }
 
+- (())unionSet:(id)other { // NSSet *
+    let enumerator: id = msg![env; other objectEnumerator];
+    loop {
+        let next: id = msg![env; enumerator nextObject];
+        if next == nil {
+            break;
+        }
+        () = msg![env; this addObject:next];
+    }
+}
+
 @end
 
 };
+
+/// Helper method shared between `initWithObjects:` of `_touchHLE_NSSet` and
+/// `_touchHLE_NSMutableSet`
+fn set_from_objects(env: &mut Environment, first_obj: id, args: DotDotDot) -> DictionaryHostObject {
+    let null: id = msg_class![env; NSNull null];
+
+    let mut dict = <DictionaryHostObject as Default>::default();
+    dict.insert(env, first_obj, null, /* copy_key: */ false);
+    let mut varargs = args.start();
+    loop {
+        let next_arg: id = varargs.next(env);
+        if next_arg == nil {
+            break;
+        }
+        dict.insert(env, next_arg, null, /* copy_key: */ false);
+    }
+    dict
+}

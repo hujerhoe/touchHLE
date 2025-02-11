@@ -53,6 +53,7 @@ symphonia = { version = "0.5.3", default-features = false, features = ["aac", "i
 quick-xml = "0.36.2"
 md5 = "0.7.0"
 yore = "1.1.0"
+encoding_rs = "0.8.35"
 # We currently use a fork of rust-sdl2 because we need a fix for Android builds
 # that's not upstream yet.
 # The HIDAPI feature is enabled because rust-sdl2 hides the SDL2 sensor features
@@ -66,6 +67,7 @@ touchHLE_gl_bindings = { path = "src/gles/gl_bindings" }
 touchHLE_openal_soft_wrapper = { path = "src/audio/openal_soft_wrapper" }
 touchHLE_pvrt_decompress_wrapper = { path = "src/image/pvrt_decompress_wrapper" }
 touchHLE_stb_image_wrapper = { path = "src/image/stb_image_wrapper" }
+touchHLE_version = { path = "src/version" }
 
 [build-dependencies]
 cargo-license = "0.5.1"

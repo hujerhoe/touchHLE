@@ -168,6 +168,11 @@ pub const CLASSES: ClassExports = objc_classes! {
     this
 }
 
+- (EAGLRenderingAPI)API {
+    // TODO: support later API versions
+    kEAGLRenderingAPIOpenGLES1
+}
+
 - (id)sharegroup {
     // We use object itself as the sharegroup.
     // Check initWithAPI:sharegroup: for more info
@@ -207,7 +212,7 @@ pub const CLASSES: ClassExports = objc_classes! {
     // and it seems like RGB565 isn't supported, at least on a machine with
     // Intel HD Graphics 615 running macOS Monterey. I don't think RGBA8 is
     // guaranteed either, but it at least seems to work.
-    if !msg![env; format isEqualTo:format_rgba8] && !msg![env; format isEqualTo:format_rgb565] {
+    if !msg![env; format isEqual:format_rgba8] && !msg![env; format isEqual:format_rgb565] {
         log!("[renderbufferStorage:{:?} fromDrawable:{:?}] Warning: unhandled format {:?}, using RGBA8", target, drawable, format);
     }
     let internalformat = gles11::RGBA8_OES;

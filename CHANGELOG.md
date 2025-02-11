@@ -34,8 +34,18 @@ Compatibility:
   - [Shrek Forever After](https://appdb.touchhle.org/apps/427) (@ciciplusplus)
   - [Spore Origins](https://appdb.touchhle.org/apps/302) (@ciciplusplus, @hikari-no-yume, @teromene)
   - [Defender Chronicles](https://appdb.touchhle.org/apps/267) (@hujerhoe)
+  - [Real Racing](https://appdb.touchhle.org/apps/188) (@ciciplusplus)
+  - [Tom Clancy's Splinter Cell: Conviction](https://appdb.touchhle.org/apps/416) (@ciciplusplus)
+  - [Assassin's Creed](https://appdb.touchhle.org/apps/413) (@ciciplusplus)
+  - [N.O.V.A. Near Orbit Vanguard Alliance](https://appdb.touchhle.org/apps/443) (@ciciplusplus)
+  - [Brothers in Arms 2: Global Front](https://appdb.touchhle.org/apps/464) (@ciciplusplus)
+  - [Ferrari GT: Evolution](https://appdb.touchhle.org/apps/116) (@ciciplusplus)
+  - [Castle Frenzy](https://appdb.touchhle.org/apps/463) (@ciciplusplus)
+  - [Hero of Sparta 2](https://appdb.touchhle.org/apps/453) (@ciciplusplus)
+  - [Hero of Sparta](https://appdb.touchhle.org/apps/452) (@ciciplusplus)
+  - [Bridge Odyssey](https://appdb.touchhle.org/apps/465) (@ciciplusplus)
 - API support improvements:
-  - Various small contributions. (@hikari-no-yume, @alborrajo, @ciciplusplus, @atasro2, @LennyKappa, @hujerhoe)
+  - Various small contributions. (@hikari-no-yume, @alborrajo, @ciciplusplus, @atasro2, @abnormalmaps, @hujerhoe, @acieslewicz, @WhatAmISupposedToPutHere)
   - UITextField now supports real text input with a keyboard. On Windows/macOS physical keyboard is used, on Android it's done via a system soft keyboard. (@ciciplusplus)
   - UIScrollView and UITextView partial implementations. (@Skryptonyte, @ciciplusplus)
 
@@ -46,14 +56,17 @@ Usability:
 - App icons in the app picker are now sorted by the display name of the app, case-insensitively. (@hikari-no-yume)
 - The accelerometer (tilt controls) can now be simulated using a mouse, instead of a game controller or real accelerometer. Simply hold down the right mouse button and move the mouse cursor. (@alborrajo)
 - Default options for various games. (@nighto)
+- macOS builds and releases of touchHLE now come as an application bundle (`.app` directory) rather than as a bare “Unix executable” file. This should fix problems some users encountered with running touchHLE outside of a terminal, and allows putting touchHLE in the Applications folder like a normal graphical app. To support this, user data (apps, options, etc) is now stored in “Application Support” rather than the current directory, and the bundled files (fonts, dylibs, etc) are now part of the app bundle. If you prefer the old layout, you can still get it if you move all the files out of the bundle. (@hikari-no-yume)
+- The new `--force-composition=` option which may solve rendering issues in some games. For some games it is applied with default options. (@ciciplusplus)
 
 Quality:
 
 - Fix problem with non-working accelerometer on some Android phones. (@Oscar1640)
+- Fix multi-touch in some games. (@ciciplusplus)
 
 Other:
 
-- MP3 decoding now uses Symphonia rather than dr\_mp3. We do not expect this to affect compatibility. (@LennyKappa)
+- MP3 decoding now uses Symphonia rather than dr\_mp3. We do not expect this to affect compatibility. (@abnormalmaps)
 
 ## v0.2.2 (2024-04-01)
 
@@ -65,7 +78,7 @@ Compatibility:
   - [Earthworm Jim](https://appdb.touchhle.org/apps/280) (@ciciplusplus)
   - [Castle of Magic](https://appdb.touchhle.org/apps/281) (@ciciplusplus)
 - API support improvements:
-  - Various small contributions. (@alborrajo, @WhatAmISupposedToPutHere, @ciciplusplus, @hikari-no-yume, @LennyKappa, @Skryptonyte, @teromene)
+  - Various small contributions. (@alborrajo, @WhatAmISupposedToPutHere, @ciciplusplus, @hikari-no-yume, @abnormalmaps, @Skryptonyte, @teromene)
   - AAC audio files (AAC-LC in a typical MPEG-4 container) are now supported in Audio Toolbox. This is done in a fairly hacky way so it might not work for some apps. (@hikari-no-yume)
 - There is now support for iPhone OS 3.0 apps, in addition to the existing support for iPhone OS 2.x apps:
   - Support for fat binaries has been added. touchHLE will no longer crash when trying to run an app with both ARMv6 and ARMv7 versions, and instead will try to pick the best available option (ARMv7, or failing this, ARMv6). This improves compatibility with iPhone OS 3.0 apps, many of which use fat binaries in order to improve performance on the iPhone 3GS and iPod touch (3rd generation). (@WhatAmISupposedToPutHere)
@@ -112,10 +125,10 @@ Usability:
 Compatibility:
 
 - API support improvements:
-  - Various small contributions. (@hikari-no-yume, @KiritoDv, @ciciplusplus, @TylerJaacks, @LennyKappa)
+  - Various small contributions. (@hikari-no-yume, @KiritoDv, @ciciplusplus, @TylerJaacks, @abnormalmaps)
   - PVRTC and paletted texture compression is now supported. (@hikari-no-yume)
   - Some key pieces of UIKit and Core Animation are now implemented: layer and view hierarchy, layer and view drawing, layer compositing, touch input hit testing, `UIImageView`, `UILabel`, `UIControl`, and `UIButton`. Previously, touchHLE could only support apps that draw everything with OpenGL ES, which is only common for games. This lays the groundwork for supporting games that rely on UIKit, and possibly some non-game apps. (@hikari-no-yume)
-  - Threads can now sleep, join other threads, and block on mutexes. (@LennyKappa, @hikari-no-yume)
+  - Threads can now sleep, join other threads, and block on mutexes. (@abnormalmaps, @hikari-no-yume)
 
 - New supported apps:
   - Fastlane Street Racing (@hikari-no-yume)
@@ -193,7 +206,7 @@ Other:
 Compatibility:
 
 - API support improvements:
-  - Various small contributions. (@hikari-no-yume, @nitinseshadri, @LennyKappa, @RealSupremium)
+  - Various small contributions. (@hikari-no-yume, @nitinseshadri, @abnormalmaps, @RealSupremium)
   - Basic POSIX file I/O is now supported. Previously only standard C file I/O was supported. (@hikari-no-yume)
   - Very basic use of Audio Session Services is now supported. (@nitinseshadri)
   - Very basic use of `MPMoviePlayerController` is now supported. No actual video playback is implemented. (@hikari-no-yume)

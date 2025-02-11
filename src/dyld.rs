@@ -24,6 +24,7 @@ mod constant_lists;
 mod function_lists;
 
 use crate::abi::{CallFromGuest, GuestFunction};
+use crate::bundle;
 use crate::cpu::Cpu;
 use crate::frameworks::foundation::ns_string;
 use crate::mach_o::{MachO, SectionType};
@@ -213,7 +214,13 @@ impl Dyld {
 
     /// Do linking-related tasks that need doing right after loading the
     /// binaries.
-    pub fn do_initial_linking(&mut self, bins: &[MachO], mem: &mut Mem, objc: &mut ObjC) {
+    pub fn do_initial_linking(
+        &mut self,
+        bundle: &bundle::Bundle,
+        bins: &[MachO],
+        mem: &mut Mem,
+        objc: &mut ObjC,
+    ) {
         assert!(self.return_to_host_routine.is_none());
         assert!(self.thread_exit_routine.is_none());
         self.return_to_host_routine =
@@ -232,7 +239,7 @@ impl Dyld {
             self.do_non_lazy_linking(bin, bins, mem, objc);
         }
 
-        objc.register_bin_classes(&bins[0], mem);
+        objc.register_bin_classes(bundle, &bins[0], mem);
         objc.register_bin_categories(&bins[0], mem);
 
         ns_string::register_constant_strings(&bins[0], mem, objc);
@@ -339,6 +346,19 @@ impl Dyld {
             {
                 // Often used for C++ RTTI
                 Ptr::from_bits(external_addr)
+            } else if let Some((symbol, _)) = search_lists(function_lists::FUNCTION_LISTS, name) {
+                // We want the same symbol name to always point to the same
+                // function.
+                let trampoline_ptr = self
+                    .create_proc_address_no_inval(mem, symbol)
+                    .unwrap()
+                    .to_ptr();
+                log_dbg!(
+                    "Linked external relocation to host function {} at {:?}",
+                    symbol,
+                    trampoline_ptr
+                );
+                trampoline_ptr
             } else {
                 unhandled_relocations
                     .entry(name)

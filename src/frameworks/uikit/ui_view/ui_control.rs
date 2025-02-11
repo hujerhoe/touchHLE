@@ -9,6 +9,8 @@
 //! - The [Target-Action section](https://developer.apple.com/library/archive/documentation/General/Conceptual/CocoaEncyclopedia/Target-Action/Target-Action.html) of Apple's "Concepts in Objective-C Programming".
 
 pub mod ui_button;
+pub mod ui_segmented_control;
+pub mod ui_slider;
 pub mod ui_switch;
 pub mod ui_text_field;
 
@@ -21,7 +23,7 @@ use crate::objc::{
 use crate::Environment;
 
 // TODO: There are many members of this enum missing.
-type UIControlEvents = NSUInteger;
+pub type UIControlEvents = NSUInteger;
 const UIControlEventTouchDown: UIControlEvents = 1 << 0;
 const UIControlEventTouchDragInside: UIControlEvents = 1 << 2;
 const UIControlEventTouchDragOutside: UIControlEvents = 1 << 3;
@@ -29,6 +31,7 @@ const UIControlEventTouchDragEnter: UIControlEvents = 1 << 4;
 const UIControlEventTouchDragExit: UIControlEvents = 1 << 5;
 pub const UIControlEventTouchUpInside: UIControlEvents = 1 << 6;
 const UIControlEventTouchUpOutside: UIControlEvents = 1 << 7;
+pub const UIControlEventValueChanged: UIControlEvents = 1 << 12;
 
 struct UIControlHostObject {
     superclass: super::UIViewHostObject,

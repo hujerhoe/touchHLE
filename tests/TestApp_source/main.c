@@ -150,6 +150,21 @@ int sem_wait(sem_t *);
 #define LC_MESSAGES 6
 char *setlocale(int category, const char *locale);
 
+#ifdef DEFINE_ME_WHEN_BUILDING_ON_MACOS
+typedef long _register_t; // 64-bit definition
+#else
+typedef int _register_t;
+#endif
+
+// <setjmp.h>
+#define _JBLEN (10 + 16 + 2)
+typedef _register_t jmp_buf[_JBLEN];
+int setjmp(jmp_buf env);
+void longjmp(jmp_buf env, int val);
+
+// <ctype.h>
+int __maskrune(wchar_t, unsigned long);
+
 // <dirent.h>
 typedef struct {
   int _unused;
@@ -166,6 +181,13 @@ int scandir(const char *, struct dirent ***, int (*)(struct dirent *),
 
 // <wchar.h>
 int swscanf(const wchar_t *, const wchar_t *, ...);
+
+// <math.h>
+long int lrint(double);
+long int lrintf(float);
+double ldexp(double, int);
+float ldexpf(float, int);
+float frexpf(float, int *);
 
 // `CFBase.h`
 
@@ -412,6 +434,11 @@ int test_vsnprintf() {
   res += !!strcmp(str,
                   "10 100 4294967296 4294967296 10 100 4294967296 4294967296");
   free(str);
+  // Test %.50s with a long string
+  str = str_format("%.50s",
+                   "ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ");
+  res += !!strcmp(str, "ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWX");
+  free(str);
 
   return res;
 }
@@ -466,6 +493,12 @@ int test_sscanf() {
   matched = sscanf("09", "%i", &a);
   if (!(matched == 1 && a == 0))
     return -16;
+  matched = sscanf("FF00", "%2x%2x", &a, &b);
+  if (!(matched == 2 && a == 255 && b == 0))
+    return -17;
+  matched = sscanf("aa", "%10x", &a);
+  if (!(matched == 1 && a == 170))
+    return -18;
   return 0;
 }
 
@@ -1202,6 +1235,16 @@ int test_open() {
   return 0;
 }
 
+int test_close() {
+  if (close(0) != 0)
+    return -1;
+  if (close(-1) == 0)
+    return -2;
+  if (close(1000) == 0)
+    return -3;
+  return 0;
+}
+
 int test_CFMutableDictionary_NullCallbacks() {
   CFMutableDictionaryRef dict = CFDictionaryCreateMutable(NULL, 0, NULL, NULL);
   if (dict == NULL) {
@@ -1853,6 +1896,265 @@ int test_CFMutableDictionary_CustomCallbacks_CFTypes() {
   return 0;
 }
 
+int test_lrint() {
+  struct {
+    double input;
+    long int expected;
+  } test_cases[] = {
+      {0.0, 0L},
+      {0.5, 0L},
+      {1.0, 1L},
+      {1.5, 2L},
+      {2.0, 2L},
+      {2.5, 2L},
+      {3.0, 3L},
+      {3.5, 4L},
+      {4.5, 4L},
+      {5.5, 6L},
+      {-0.0, 0L},
+      {-0.5, 0L},
+      {-1.0, -1L},
+      {-1.5, -2L},
+      {-2.0, -2L},
+      {-2.5, -2L},
+      {-3.0, -3L},
+      {-3.5, -4L},
+      {-4.5, -4L},
+      {-5.5, -6L},
+      {1.4999999999, 1L},
+      {1.5000000001, 2L},
+      {-1.4999999999, -1L},
+      {-1.5000000001, -2L},
+      // Around INT_MAX
+      {2147483647.0, 2147483647L},
+      {2147483646.5, 2147483646L},
+      {2147483647.4, 2147483647L},
+      // Around INT_MIN
+      {-2147483648.0, -2147483648L},
+      {-2147483648.5, -2147483648L},
+      {-2147483647.5, -2147483648L},
+  };
+  int num_tests = sizeof(test_cases) / sizeof(test_cases[0]);
+  for (int i = 0; i < num_tests; i++) {
+    double input = test_cases[i].input;
+    long int expected = test_cases[i].expected;
+    long int result = lrint(input);
+    if (result != expected) {
+      return -(i + 1);
+    }
+  }
+
+  struct {
+    float input;
+    long int expected;
+  } test_cases_f[] = {
+      {0.0f, 0L},
+      {0.5f, 0L},
+      {1.0f, 1L},
+      {1.5f, 2L},
+      {2.0f, 2L},
+      {2.5f, 2L},
+      {3.0f, 3L},
+      {3.5f, 4L},
+      {4.5f, 4L},
+      {5.5f, 6L},
+      {-0.0f, 0L},
+      {-0.5f, 0L},
+      {-1.0f, -1L},
+      {-1.5f, -2L},
+      {-2.0f, -2L},
+      {-2.5f, -2L},
+      {-3.0f, -3L},
+      {-3.5f, -4L},
+      {-4.5f, -4L},
+      {-5.5f, -6L},
+      {1.4999999f, 1L},
+      {1.5000001f, 2L},
+      {-1.4999999f, -1L},
+      {-1.5000001f, -2L},
+#ifdef DEFINE_ME_WHEN_BUILDING_ON_MACOS
+      // on macOS `long int` is 8 bytes
+      {2147483648.0f, 2147483648L},
+#else
+      {2147483648.0f, 2147483647L}
+#endif
+  };
+  int num_tests_f = sizeof(test_cases_f) / sizeof(test_cases_f[0]);
+  for (int i = 0; i < num_tests_f; i++) {
+    float input = test_cases_f[i].input;
+    long int expected = test_cases_f[i].expected;
+    long int result = lrintf(input);
+    if (result != expected) {
+      return -(num_tests + i + 1);
+    }
+  }
+
+  return 0;
+}
+
+int test_ldexp() {
+  struct {
+    double x;
+    int n;
+    double expected;
+  } test_cases[] = {
+      {0.0, 5, 0.0},  {-0.0, -3, -0.0}, {1.0, 0, 1.0},   {1.0, 1, 2.0},
+      {1.0, -1, 0.5}, {2.5, 3, 20.0},   {3.0, -2, 0.75},
+  };
+  int num_tests = sizeof(test_cases) / sizeof(test_cases[0]);
+  for (int i = 0; i < num_tests; i++) {
+    double x = test_cases[i].x;
+    int n = test_cases[i].n;
+    double expected = test_cases[i].expected;
+    double result = ldexp(x, n);
+
+    if (expected != result) {
+      return -(i + 1);
+    }
+  }
+
+  struct {
+    float x;
+    int n;
+    float expected;
+  } test_cases_f[] = {
+      {0.0f, 5, 0.0f},  {-0.0f, -3, -0.0f}, {1.0f, 0, 1.0f},   {1.0f, 1, 2.0f},
+      {1.0f, -1, 0.5f}, {2.5f, 3, 20.0f},   {3.0f, -2, 0.75f},
+  };
+  int num_tests_f = sizeof(test_cases_f) / sizeof(test_cases_f[0]);
+  for (int i = 0; i < num_tests_f; i++) {
+    float x = test_cases_f[i].x;
+    int n = test_cases_f[i].n;
+    float expected = test_cases_f[i].expected;
+    float result = ldexpf(x, n);
+
+    if (expected != result) {
+      return -(num_tests + i + 1);
+    }
+  }
+
+  return 0;
+}
+
+// Just for readability, similar to _CTYPE_* constants
+#define MASK_RUNE_ALPHA 0x00100L
+#define MASK_RUNE_CONTROL 0x00200L
+#define MASK_RUNE_DIGIT 0x00400L
+#define MASK_RUNE_GRAPH 0x00800L
+#define MASK_RUNE_LOWER 0x01000L
+#define MASK_RUNE_PUNCT 0x02000L
+#define MASK_RUNE_SPACE 0x04000L
+#define MASK_RUNE_UPPER 0x08000L
+#define MASK_RUNE_XDIGIT 0x10000L
+#define MASK_RUNE_BLANK 0x20000L
+#define MASK_RUNE_PRINT 0x40000L
+
+int test_maskrune() {
+  struct {
+    char c;
+    unsigned long mask;
+    int expected;
+  } test_cases[] = {
+      {'A', MASK_RUNE_ALPHA, 256},    {'A', MASK_RUNE_UPPER, 32768},
+      {'A', MASK_RUNE_GRAPH, 2048},   {'A', MASK_RUNE_LOWER, 0},
+
+      {'z', MASK_RUNE_ALPHA, 256},    {'z', MASK_RUNE_LOWER, 4096},
+      {'z', MASK_RUNE_GRAPH, 2048},   {'z', MASK_RUNE_UPPER, 0},
+
+      {'5', MASK_RUNE_DIGIT, 1024},   {'5', MASK_RUNE_XDIGIT, 65536},
+      {'5', MASK_RUNE_ALPHA, 0},
+
+      {'?', MASK_RUNE_PUNCT, 8192},   {'?', MASK_RUNE_GRAPH, 2048},
+      {'?', MASK_RUNE_PRINT, 262144}, {'?', MASK_RUNE_ALPHA, 0},
+
+      {' ', MASK_RUNE_SPACE, 16384},  {' ', MASK_RUNE_BLANK, 131072},
+      {' ', MASK_RUNE_PRINT, 262144}, {' ', MASK_RUNE_GRAPH, 0},
+
+      {'\n', MASK_RUNE_CONTROL, 512}, {'\n', MASK_RUNE_PRINT, 0},
+      {'\n', MASK_RUNE_GRAPH, 0},
+
+      {'F', MASK_RUNE_XDIGIT, 65536}, {'G', MASK_RUNE_XDIGIT, 0},
+  };
+
+  int num_tests = sizeof(test_cases) / sizeof(test_cases[0]);
+  for (int i = 0; i < num_tests; i++) {
+    char c = test_cases[i].c;
+    unsigned long mask = test_cases[i].mask;
+    int expected = test_cases[i].expected;
+    int result = __maskrune(c, mask);
+
+    if (expected != result) {
+      return -(i + 1);
+    }
+  }
+  return 0;
+}
+
+int test_frexpf(void) {
+  int exp_val;
+  float m;
+
+  /* Test 1: 8.0f = 0.5 * 2^4 */
+  m = frexpf(8.0f, &exp_val);
+  if (m != 0.5f || exp_val != 4)
+    return -1;
+
+  /* Test 2: 4.0f = 0.5 * 2^3 */
+  m = frexpf(4.0f, &exp_val);
+  if (m != 0.5f || exp_val != 3)
+    return -2;
+
+  /* Test 3: 0.75f is already normalized: 0.75f * 2^0 = 0.75f */
+  m = frexpf(0.75f, &exp_val);
+  if (m != 0.75f || exp_val != 0)
+    return -3;
+
+  /* Test 4: 1.0f = 0.5 * 2^1 */
+  m = frexpf(1.0f, &exp_val);
+  if (m != 0.5f || exp_val != 1)
+    return -4;
+
+  /* Test 5: 0.125f = 0.5 * 2^-2 */
+  m = frexpf(0.125f, &exp_val);
+  if (m != 0.5f || exp_val != -2)
+    return -5;
+
+  /* Test 6: 0.0f should return 0.0f and exponent 0 */
+  m = frexpf(0.0f, &exp_val);
+  if (m != 0.0f || exp_val != 0)
+    return -6;
+
+  /* Test 7: Negative value, -8.0f = -0.5 * 2^4 */
+  m = frexpf(-8.0f, &exp_val);
+  if (m != -0.5f || exp_val != 4)
+    return -7;
+
+  /* Test 8: -0.0f should be preserved (check with signbit) */
+  m = frexpf(-0.0f, &exp_val);
+  if (m != 0.0f || exp_val != 0)
+    return -8;
+
+  return 0;
+}
+
+void jmpfunction(jmp_buf env_buf) { longjmp(env_buf, 432); }
+
+int test_setjmp() {
+  int val;
+  jmp_buf env_buffer;
+
+  /* save calling environment for longjmp */
+  val = setjmp(env_buffer);
+
+  if (val != 0) {
+    return val == 432 ? 0 : -2;
+  }
+
+  jmpfunction(env_buffer);
+
+  return -1;
+}
+
 // clang-format off
 #define FUNC_DEF(func)                                                         \
   { &func, #func }
@@ -1888,10 +2190,16 @@ struct {
     FUNC_DEF(test_CFMutableString),
     FUNC_DEF(test_fwrite),
     FUNC_DEF(test_open),
+    FUNC_DEF(test_close),
     FUNC_DEF(test_cond_var),
     FUNC_DEF(test_CFMutableDictionary_NullCallbacks),
     FUNC_DEF(test_CFMutableDictionary_CustomCallbacks_PrimitiveTypes),
     FUNC_DEF(test_CFMutableDictionary_CustomCallbacks_CFTypes),
+    FUNC_DEF(test_lrint),
+    FUNC_DEF(test_ldexp),
+    FUNC_DEF(test_maskrune),
+    FUNC_DEF(test_frexpf),
+    FUNC_DEF(test_setjmp),
 };
 // clang-format on
 

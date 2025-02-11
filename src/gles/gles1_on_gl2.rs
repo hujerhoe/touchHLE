@@ -595,10 +595,15 @@ impl GLES for GLES1OnGL2 {
         } else if cap == gl21::PERSPECTIVE_CORRECTION_HINT
             || cap == gl21::SMOOTH
             || cap == gl21::BLEND_EQUATION
+            || cap == gl21::TEXTURE
         {
             log_dbg!("Tolerating glEnable({:#x})", cap);
         } else {
-            assert!(CAPABILITIES.contains(&cap));
+            assert!(
+                CAPABILITIES.contains(&cap),
+                "Unexpected capability for glEnable({:#x})",
+                cap
+            );
         }
         gl21::Enable(cap);
     }
@@ -696,7 +701,16 @@ impl GLES for GLES1OnGL2 {
             gl21::POINT_SMOOTH_HINT
         ]
         .contains(&target));
-        assert!([gl21::FASTEST, gl21::NICEST, gl21::DONT_CARE].contains(&mode));
+        if mode == 0x0 {
+            log_dbg!("Tolerating glHint({:#x}, {:#x})", target, mode);
+        } else {
+            assert!(
+                [gl21::FASTEST, gl21::NICEST, gl21::DONT_CARE].contains(&mode),
+                "Unexpected mode in glHint({:#x}, {:#x})",
+                target,
+                mode
+            );
+        }
         gl21::Hint(target, mode);
     }
     unsafe fn Finish(&mut self) {
@@ -821,8 +835,15 @@ impl GLES for GLES1OnGL2 {
         gl21::ClipPlane(plane, &equation_double as _)
     }
     unsafe fn CullFace(&mut self, mode: GLenum) {
-        assert!([gl21::FRONT, gl21::BACK, gl21::FRONT_AND_BACK].contains(&mode));
-        gl21::CullFace(mode);
+        if mode == gl21::CCW {
+            log_dbg!("Tolerating glCullFace({:#x})", mode);
+        } else {
+            assert!(
+                [gl21::FRONT, gl21::BACK, gl21::FRONT_AND_BACK].contains(&mode),
+                "Unexpected glCullFace({:#x})",
+                mode
+            );
+        }
     }
     unsafe fn DepthFunc(&mut self, func: GLenum) {
         assert!([
@@ -1047,6 +1068,9 @@ impl GLES for GLES1OnGL2 {
     }
 
     // Buffers
+    unsafe fn IsBuffer(&mut self, buffer: GLuint) -> GLboolean {
+        gl21::IsBuffer(buffer)
+    }
     unsafe fn GenBuffers(&mut self, n: GLsizei, buffers: *mut GLuint) {
         gl21::GenBuffers(n, buffers)
     }
@@ -1464,6 +1488,7 @@ impl GLES for GLES1OnGL2 {
                 || format == gl21::RGBA
                 || format == gl21::LUMINANCE
                 || format == gl21::LUMINANCE_ALPHA
+                || format == gl21::BGRA
         );
         assert!(
             type_ == gl21::UNSIGNED_BYTE

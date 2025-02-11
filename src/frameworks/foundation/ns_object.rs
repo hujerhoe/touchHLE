@@ -46,6 +46,9 @@ pub const CLASSES: ClassExports = objc_classes! {
 + (Class)class {
     this
 }
++ (bool)isSubclassOfClass:(Class)class {
+    env.objc.class_is_subclass_of(this, class)
+}
 
 // See the instance method section for the normal versions of these.
 + (id)retain {
@@ -110,6 +113,10 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (NSUInteger)hash {
     this.to_bits()
 }
+
+// To not confuse with isEqualTo:, which is
+// a category of NSWhoseSpecifier!
+// Reference https://nshipster.com/equality
 - (bool)isEqual:(id)other {
     this == other
 }
@@ -271,6 +278,41 @@ forUndefinedKey:(id)key { // NSString*
         log!("Applying game-specific hack for Asphalt5: ignoring performSelectorOnMainThread:SEL({}) waitUntilDone:true", sel.as_str(&env.mem));
         return;
     }
+    if env.bundle.bundle_identifier().starts_with("com.gameloft.SplinterCell") && sel == env.objc.lookup_selector("startMovie:").unwrap() && wait {
+        log!("Applying game-specific hack for SplinterCell: ignoring performSelectorOnMainThread:SEL({}) waitUntilDone:true", sel.as_str(&env.mem));
+        return;
+    }
+    if env.bundle.bundle_identifier().starts_with("com.gameloft.AssassinsCreed") && sel == env.objc.lookup_selector("moviePlayerInit:").unwrap() && wait {
+        log!("Applying game-specific hack for AssassinsCreed: ignoring performSelectorOnMainThread:SEL(moviePlayerInit:) waitUntilDone:true");
+        return;
+    }
+    if env.bundle.bundle_identifier().starts_with("com.gameloft.Ferrari") && wait {
+        if sel == env.objc.lookup_selector("startMovie:").unwrap() {
+            log!("Applying game-specific hack for Ferrari GT: ignoring performSelectorOnMainThread:SEL({}) waitUntilDone:true", sel.as_str(&env.mem));
+            return;
+        }
+        if sel == env.objc.lookup_selector("initTextInput:").unwrap() || sel == env.objc.lookup_selector("removeTextField:").unwrap() {
+            log!("Applying game-specific hack for Ferrari GT: performing performSelectorOnMainThread:SEL({}) waitUntilDone:true on thread {}", sel.as_str(&env.mem), env.current_thread);
+            () = msg_send(env, (this, sel, arg));
+            return;
+        }
+    }
+    if env.bundle.bundle_identifier().starts_with("com.gameloft.HOS2") && wait {
+        if sel == env.objc.lookup_selector("loadMovie:").unwrap() || sel == env.objc.lookup_selector("sendGameInfo").unwrap() || sel == env.objc.lookup_selector("setStatusBar:").unwrap() {
+            log!("Applying game-specific hack for HOS2: performing performSelectorOnMainThread:SEL({}) waitUntilDone:true on thread {}", sel.as_str(&env.mem), env.current_thread);
+            if sel.as_str(&env.mem).ends_with(':') {
+                () = msg_send(env, (this, sel, arg));
+            } else {
+                assert!(arg.is_null());
+                () = msg_send(env, (this, sel));
+            }
+            return;
+        }
+        if sel == env.objc.lookup_selector("startMovie:").unwrap() || sel == env.objc.lookup_selector("stopMovie:").unwrap() {
+            log!("Applying game-specific hack for HOS2: ignoring performSelectorOnMainThread:SEL({}) waitUntilDone:true", sel.as_str(&env.mem));
+            return;
+        }
+    }
     // TODO: support waiting
     // This would require tail calls for message send or a switch to async model
     assert!(!wait);
@@ -292,8 +334,12 @@ forUndefinedKey:(id)key { // NSString*
     let arg_key: id = get_static_str(env, "arg");
     let arg: id = msg![env; dict objectForKey:arg_key];
 
-    // FIXME: handle the case of a selector without an arg here too
-    () = msg_send(env, (this, sel, arg));
+    if sel.as_str(&env.mem).ends_with(':') {
+        () = msg_send(env, (this, sel, arg));
+    } else {
+        assert!(arg.is_null());
+        () = msg_send(env, (this, sel));
+    }
 }
 
 @end

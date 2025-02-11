@@ -58,7 +58,49 @@ const SUPPORTED_COMPRESSED_TEXTURE_FORMATS: &[GLenum] = &[
     gles11::PALETTE8_RGBA8_OES,
 ];
 
-fn with_ctx_and_mem<T, U>(env: &mut Environment, f: T) -> U
+/// Sync the current context and performs a function `f` within it.
+///
+/// In case of missing EAGL context for a current thread,
+/// returns a default value.
+fn with_ctx_and_mem<T, U: Default>(env: &mut Environment, f: T) -> U
+where
+    T: FnOnce(&mut dyn GLES, &mut Mem) -> U,
+{
+    if env
+        .framework_state
+        .opengles
+        .current_ctx_for_thread(env.current_thread)
+        .is_none()
+    {
+        log!(
+            "Warning: No EAGLContext for thread {}! Ignoring OpenGL ES call, returning default value.",
+            env.current_thread
+        );
+        return U::default();
+    }
+
+    let gles = super::sync_context(
+        &mut env.framework_state.opengles,
+        &mut env.objc,
+        env.window
+            .as_mut()
+            .expect("OpenGL ES is not supported in headless mode"),
+        env.current_thread,
+    );
+
+    //panic_on_gl_errors(&mut *gles);
+    let res = f(gles, &mut env.mem);
+    //panic_on_gl_errors(&mut *gles);
+    #[allow(clippy::let_and_return)]
+    res
+}
+
+/// Version of with_ctx_and_mem which panics on a missing context.
+///
+/// Needed because for return types such as `*mut GLvoid` we cannnot
+/// return a default value in case EAGL context is missing for
+/// a current thread.
+fn with_ctx_and_mem_no_skip<T, U>(env: &mut Environment, f: T) -> U
 where
     T: FnOnce(&mut dyn GLES, &mut Mem) -> U,
 {
@@ -71,9 +113,9 @@ where
         env.current_thread,
     );
 
-    //panic_on_gl_errors(&mut **gles);
+    //panic_on_gl_errors(&mut *gles);
     let res = f(gles, &mut env.mem);
-    //panic_on_gl_errors(&mut **gles);
+    //panic_on_gl_errors(&mut *gles);
     #[allow(clippy::let_and_return)]
     res
 }
@@ -454,7 +496,10 @@ fn glMaterialxv(env: &mut Environment, face: GLenum, pname: GLenum, params: Cons
     })
 }
 
-// Textures
+// Buffers
+fn glIsBuffer(env: &mut Environment, buffer: GLuint) -> GLboolean {
+    with_ctx_and_mem(env, |gles, _mem| unsafe { gles.IsBuffer(buffer) })
+}
 fn glGenBuffers(env: &mut Environment, n: GLsizei, buffers: MutPtr<GLuint>) {
     with_ctx_and_mem(env, |gles, mem| {
         let n_usize: GuestUSize = n.try_into().unwrap();
@@ -832,6 +877,25 @@ fn glTranslatex(env: &mut Environment, x: GLfixed, y: GLfixed, z: GLfixed) {
 // Textures
 fn glPixelStorei(env: &mut Environment, pname: GLenum, param: GLint) {
     with_ctx_and_mem(env, |gles, _mem| unsafe { gles.PixelStorei(pname, param) })
+}
+fn glReadPixels(
+    env: &mut Environment,
+    x: GLint,
+    y: GLint,
+    width: GLsizei,
+    height: GLsizei,
+    format: GLenum,
+    type_: GLenum,
+    pixels: MutVoidPtr,
+) {
+    with_ctx_and_mem(env, |gles, mem| {
+        let pixels = {
+            let pixel_count: GuestUSize = width.checked_mul(height).unwrap().try_into().unwrap();
+            let size = image_size_estimate(pixel_count, format, type_);
+            mem.ptr_at_mut(pixels.cast::<u8>(), size).cast::<GLvoid>()
+        };
+        unsafe { gles.ReadPixels(x, y, width, height, format, type_, pixels) }
+    })
 }
 fn glGenTextures(env: &mut Environment, n: GLsizei, textures: MutPtr<GLuint>) {
     with_ctx_and_mem(env, |gles, mem| {
@@ -1235,7 +1299,7 @@ fn glMapBufferOES(env: &mut Environment, target: GLenum, access: GLenum) -> MutP
     assert!(matches!(target, ARRAY_BUFFER | ELEMENT_ARRAY_BUFFER));
     assert!(access == WRITE_ONLY_OES);
     let buffer_object_name = _get_currently_bound_buffer_object_name(env, target);
-    let host_buffer = with_ctx_and_mem(env, |gles, _mem| unsafe {
+    let host_buffer = with_ctx_and_mem_no_skip(env, |gles, _mem| unsafe {
         gles.MapBufferOES(target, access)
     });
     if host_buffer.is_null() {
@@ -1400,6 +1464,7 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(glMaterialfv(_, _, _)),
     export_c_func!(glMaterialxv(_, _, _)),
     // Buffers
+    export_c_func!(glIsBuffer(_)),
     export_c_func!(glGenBuffers(_, _)),
     export_c_func!(glDeleteBuffers(_, _)),
     export_c_func!(glBindBuffer(_, _)),
@@ -1447,6 +1512,7 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(glTranslatex(_, _, _)),
     // Textures
     export_c_func!(glPixelStorei(_, _)),
+    export_c_func!(glReadPixels(_, _, _, _, _, _, _)),
     export_c_func!(glGenTextures(_, _)),
     export_c_func!(glDeleteTextures(_, _)),
     export_c_func!(glActiveTexture(_)),
