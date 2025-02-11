@@ -105,7 +105,7 @@ com.polarbit.waveblazer: --landscape-left
 com.ea.candcra.row: --landscape-left
 
 # Defender chronicles
-com.chillingo.defenderchronicles: --landscape-left
+com.chillingo.defenderchronicles: --landscape-left --force-composition
 
 # SimCity
 # (we neeed to force language to avoid a crash)
