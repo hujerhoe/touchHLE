@@ -5,12 +5,13 @@
  */
 //! `NSURL`.
 
-use super::ns_string::{from_rust_string, to_rust_string, NSUTF8StringEncoding};
+use super::ns_string::{from_rust_string, get_static_str, to_rust_string};
 use super::NSUInteger;
 use crate::fs::{GuestPath, GuestPathBuf};
 use crate::mem::MutPtr;
 use crate::objc::{
-    autorelease, id, msg, nil, objc_classes, release, retain, ClassExports, HostObject, NSZonePtr,
+    autorelease, id, msg, msg_class, nil, objc_classes, release, retain, ClassExports, HostObject,
+    NSZonePtr,
 };
 use crate::Environment;
 use std::borrow::Cow;
@@ -86,6 +87,7 @@ pub const CLASSES: ClassExports = objc_classes! {
     // FIXME: this does not resolve relative paths to be absolute!
     // TODO: this does not strip the file:/// prefix!
     assert!(!to_rust_string(env, path).starts_with("file:"));
+    let path = msg![env; path stringByExpandingTildeInPath];
     let path: id = msg![env; path copy];
     *env.objc.borrow_mut(this) = NSURLHostObject::FileURL { ns_string: path, working_directory: env.fs.working_directory().into() };
     this
@@ -101,6 +103,13 @@ pub const CLASSES: ClassExports = objc_classes! {
     let url: id = msg![env; url copy];
     *env.objc.borrow_mut(this) = NSURLHostObject::OtherURL { ns_string: url };
     this
+}
+
+- (bool)isFileURL {
+    match env.objc.borrow(this) {
+        NSURLHostObject::FileURL { .. } => true,
+        NSURLHostObject::OtherURL { .. } => false,
+    }
 }
 
 - (id)description {
@@ -156,13 +165,40 @@ pub const CLASSES: ClassExports = objc_classes! {
     let &NSURLHostObject::FileURL { ns_string, .. } = env.objc.borrow(this) else {
         unimplemented!(); // TODO
     };
-    msg![env; ns_string getCString:buffer
-                         maxLength:buffer_size
-                          encoding:NSUTF8StringEncoding]
+    msg![env; ns_string getFileSystemRepresentation:buffer maxLength:buffer_size]
+}
+
+- (id)URLByAppendingPathComponent:(id)path_component // NSString *
+                      isDirectory:(bool)is_directory {
+    let &NSURLHostObject::FileURL { ns_string, .. } = env.objc.borrow(this) else {
+        unimplemented!(); // TODO
+    };
+    let mut path: id = msg![env; ns_string stringByAppendingPathComponent:path_component];
+    if is_directory {
+        path = msg![env; path stringByAppendingString:(get_static_str(env, "/"))];
+    }
+    msg_class![env; NSURL fileURLWithPath:path]
+}
+
+- (id)URLByDeletingLastPathComponent {
+    let &NSURLHostObject::FileURL { ns_string, .. } = env.objc.borrow(this) else {
+        unimplemented!(); // TODO
+    };
+    let path: id = msg![env; ns_string stringByDeletingLastPathComponent];
+    msg_class![env; NSURL fileURLWithPath:path]
 }
 
 // TODO: more constructors, more accessors
 
+@end
+
+// A caching layer a top of NSURL, it's OK to stub
+// as we don't have yet a networking support
+@implementation NSURLCache: NSObject
++ (id)sharedURLCache {
+    // TODO
+    nil
+}
 @end
 
 };

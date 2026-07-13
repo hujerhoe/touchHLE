@@ -180,6 +180,8 @@ impl_CallFromGuest!(0 => P0, 1 => P1, 2 => P2, 3 => P3, 4 => P4, 5 => P5);
 impl_CallFromGuest!(0 => P0, 1 => P1, 2 => P2, 3 => P3, 4 => P4, 5 => P5, 6 => P6);
 impl_CallFromGuest!(0 => P0, 1 => P1, 2 => P2, 3 => P3, 4 => P4, 5 => P5, 6 => P6, 7 => P7);
 impl_CallFromGuest!(0 => P0, 1 => P1, 2 => P2, 3 => P3, 4 => P4, 5 => P5, 6 => P6, 7 => P7, 8 => P8);
+impl_CallFromGuest!(0 => P0, 1 => P1, 2 => P2, 3 => P3, 4 => P4, 5 => P5, 6 => P6, 7 => P7, 8 => P8, 9 => P9);
+impl_CallFromGuest!(0 => P0, 1 => P1, 2 => P2, 3 => P3, 4 => P4, 5 => P5, 6 => P6, 7 => P7, 8 => P8, 9 => P9, 10 => P10);
 
 /// This trait represents a guest or host function that can be called from host
 /// code, but using the guest ABI. See [CallFromGuest], which this is the
@@ -195,25 +197,25 @@ pub trait CallFromHost<R, P> {
     /// For a host-to-guest call to work, several pieces need to work in
     /// concert:
     /// * A new stack frame is pushed (this is optional, but makes stack
-    ///     traces clearer)
+    ///   traces clearer)
     /// * The arguments to the function are placed in registers or the
-    ///     stack according to the calling convention. This is handled by
-    ///     this trait; functions that pass through arguments to another
-    ///     function (such as `objc_msgsend`) should call
-    ///     [GuestFunction::call_without_pushing_stack_frame] instead.
+    ///   stack according to the calling convention. This is handled by
+    ///   this trait; functions that pass through arguments to another
+    ///   function (such as `objc_msgsend`) should call
+    ///   [GuestFunction::call_without_pushing_stack_frame] instead.
     /// * The program counter (PC) and Thumb flag have to be set to match
-    ///     the function being called;
+    ///   the function being called;
     /// * The link register (LR) to point to a special routine for
-    ///     returning to the host;
+    ///   returning to the host;
     /// * The emulated function eventually returns to the caller by jumping to
-    ///     the address in the link register, which should be the special
-    ///     routine.
+    ///   the address in the link register, which should be the special
+    ///   routine.
     /// * The CPU emulation recognises the special routine and returns back to
-    ///     this method.
+    ///   this method.
     /// * This method restores the original PC, Thumb flag and LR, and pops any
-    ///     stack arguments and the stack frame.
+    ///   stack arguments and the stack frame.
     /// * The return values are extracted from registers or the stack, if
-    ///     appropriate.
+    ///   appropriate.
     fn call_from_host(&self, env: &mut Environment, args: P) -> R;
 }
 

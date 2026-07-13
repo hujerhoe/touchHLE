@@ -10,6 +10,8 @@ use super::{
     ns_array::ArrayHostObject, ns_data::NSDataHostObject, ns_dictionary::DictionaryHostObject,
     ns_value::NSNumberHostObject,
 };
+use crate::frameworks::core_foundation::time::apple_epoch;
+use crate::frameworks::foundation::ns_date::NSDateHostObject;
 use crate::fs::GuestPath;
 use crate::mem::{MutPtr, MutVoidPtr};
 use crate::objc::{
@@ -18,11 +20,16 @@ use crate::objc::{
 use crate::Environment;
 use plist::Value;
 use std::io::Cursor;
+use std::ops::Add;
+use std::time::{Duration, SystemTime};
 
 pub type NSPropertyListMutabilityOptions = NSUInteger;
 pub const NSPropertyListImmutable: NSPropertyListMutabilityOptions = 0;
+pub const NSPropertyListMutableContainers: NSPropertyListMutabilityOptions = 1;
+pub const NSPropertyListMutableContainersAndLeaves: NSPropertyListMutabilityOptions = 2;
 
 pub type NSPropertyListFormat = NSUInteger;
+pub const NSPropertyListXMLFormat_v1_0: NSPropertyListFormat = 100;
 pub const NSPropertyListBinaryFormat_v1_0: NSPropertyListFormat = 200;
 
 pub const CLASSES: ClassExports = objc_classes! {
@@ -52,15 +59,33 @@ pub const CLASSES: ClassExports = objc_classes! {
           mutabilityOption:(NSPropertyListMutabilityOptions)opt
                     format:(MutPtr<NSPropertyListFormat>)format
           errorDescription:(MutPtr<id>)error_string { // NSString **
-    assert_eq!(opt, NSPropertyListImmutable); // TODO
-    assert!(format.is_null()); // TODO
-    assert!(error_string.is_null()); // TODO
-
     let slice = ns_data::to_rust_slice(env, data);
-    let root = Value::from_reader(Cursor::new(slice)).unwrap();
-    assert!(root.as_array().is_some() || root.as_dictionary().is_some());
-    let res = deserialize_plist(env, &root);
-    autorelease(env, res)
+
+    if let Ok(root) = Value::from_reader_xml(Cursor::new(slice)) {
+        assert!(root.as_array().is_some() || root.as_dictionary().is_some());
+        if !format.is_null() {
+            env.mem.write(format, NSPropertyListXMLFormat_v1_0);
+        }
+        let property_list = deserialize_plist(env, &root, opt);
+        return autorelease(env, property_list)
+    }
+
+    if let Ok(root) = Value::from_reader(Cursor::new(slice)) {
+        assert!(root.as_array().is_some() || root.as_dictionary().is_some());
+        if !format.is_null() {
+            env.mem.write(format, NSPropertyListBinaryFormat_v1_0);
+        }
+        let property_list = deserialize_plist(env, &root, opt);
+        return autorelease(env, property_list)
+    }
+
+    if !error_string.is_null() {
+        let error_message = ns_string::from_rust_string(env, String::from("Failed to parse plist"));
+        env.mem.write(error_string, error_message);
+        autorelease(env, error_message);
+    }
+
+    nil
 }
 
 @end
@@ -80,9 +105,12 @@ pub(super) fn deserialize_plist_from_file(
         return nil;
     };
 
-    let Ok(root) = Value::from_reader(Cursor::new(bytes)) else {
-        log_dbg!("Couldn't parse plist, returning nil.");
-        return nil;
+    let root = match Value::from_reader(Cursor::new(bytes)) {
+        Ok(root) => root,
+        Err(err) => {
+            log_dbg!("Couldn't parse plist, returning nil: {}", err);
+            return nil;
+        }
     };
 
     if array_expected && root.as_array().is_none() {
@@ -94,17 +122,30 @@ pub(super) fn deserialize_plist_from_file(
         return nil;
     }
 
-    deserialize_plist(env, &root)
+    // Note: The top-most container mutability may change
+    // depending on the caller.
+    // (see `NSMutableArray` and `NSMutableDictionary` implementations)
+    deserialize_plist(env, &root, NSPropertyListImmutable)
 }
 
-fn deserialize_plist(env: &mut Environment, value: &Value) -> id {
+fn deserialize_plist(
+    env: &mut Environment,
+    value: &Value,
+    mut_options: NSPropertyListMutabilityOptions,
+) -> id {
     match value {
         Value::Array(array) => {
             let array = array
                 .iter()
-                .map(|value| deserialize_plist(env, value))
+                .map(|value| deserialize_plist(env, value, mut_options))
                 .collect();
-            ns_array::from_vec(env, array)
+            match mut_options {
+                NSPropertyListImmutable => ns_array::from_vec(env, array),
+                NSPropertyListMutableContainers | NSPropertyListMutableContainersAndLeaves => {
+                    ns_array::mutable_from_vec(env, array)
+                }
+                _ => unreachable!(),
+            }
         }
         Value::Dictionary(dict) => {
             let pairs: Vec<_> = dict
@@ -112,13 +153,19 @@ fn deserialize_plist(env: &mut Environment, value: &Value) -> id {
                 .map(|(key, value)| {
                     (
                         ns_string::from_rust_string(env, key.clone()),
-                        deserialize_plist(env, value),
+                        deserialize_plist(env, value, mut_options),
                     )
                 })
                 .collect();
             // Unlike ns_array::from_vec and ns_string::from_rust_string,
             // this will retain the keys and values!
-            let ns_dict = ns_dictionary::dict_from_keys_and_objects(env, &pairs);
+            let ns_dict = match mut_options {
+                NSPropertyListImmutable => ns_dictionary::dict_from_keys_and_objects(env, &pairs),
+                NSPropertyListMutableContainers | NSPropertyListMutableContainersAndLeaves => {
+                    ns_dictionary::mutable_dict_from_keys_and_objects(env, &pairs)
+                }
+                _ => unreachable!(),
+            };
             // ...so they need to be released.
             for (key, value) in pairs {
                 release(env, key);
@@ -137,11 +184,20 @@ fn deserialize_plist(env: &mut Environment, value: &Value) -> id {
             env.mem
                 .bytes_at_mut(alloc.cast(), length)
                 .copy_from_slice(d);
-            let data: id = msg_class![env; NSData alloc];
-            msg![env; data initWithBytesNoCopy:alloc length:length]
+            let ns_data = match mut_options {
+                NSPropertyListImmutable | NSPropertyListMutableContainers => {
+                    msg_class![env; NSData alloc]
+                }
+                NSPropertyListMutableContainersAndLeaves => msg_class![env; NSMutableData alloc],
+                _ => unreachable!(),
+            };
+            msg![env; ns_data initWithBytesNoCopy:alloc length:length]
         }
-        Value::Date(_) => {
-            todo!("deserialize plist value: {:?}", value); // TODO
+        Value::Date(date_val) => {
+            let time: SystemTime = (*date_val).into();
+            let time_interval = time.duration_since(apple_epoch()).unwrap().as_secs_f64();
+            let date: id = msg_class![env; NSDate alloc];
+            msg![env; date initWithTimeIntervalSinceReferenceDate:time_interval]
         }
         Value::Integer(int) => {
             let number: id = msg_class![env; NSNumber alloc];
@@ -161,7 +217,15 @@ fn deserialize_plist(env: &mut Environment, value: &Value) -> id {
             let double: f64 = *real;
             msg![env; number initWithDouble:double]
         }
-        Value::String(s) => ns_string::from_rust_string(env, s.clone()),
+        Value::String(s) => match mut_options {
+            NSPropertyListImmutable | NSPropertyListMutableContainers => {
+                ns_string::from_rust_string(env, s.clone())
+            }
+            NSPropertyListMutableContainersAndLeaves => {
+                ns_string::mutable_from_rust_string(env, s.clone())
+            }
+            _ => unreachable!(),
+        },
         Value::Uid(_) => {
             // These are probably only used by NSKeyedUnarchiver, which does not
             // currently use this code in our implementation.
@@ -231,14 +295,22 @@ fn serialize_plist(env: &mut Environment, plist: id) -> Value {
         match num {
             NSNumberHostObject::Bool(b) => Value::Boolean(*b),
             NSNumberHostObject::Int(i) => Value::from(*i),
+            NSNumberHostObject::UnsignedInt(ui) => Value::from(*ui),
             NSNumberHostObject::Float(f) => Value::from(*f),
+            NSNumberHostObject::Double(d) => Value::from(*d),
             NSNumberHostObject::LongLong(ll) => Value::from(*ll),
+            NSNumberHostObject::Short(s) => Value::from(*s),
+            NSNumberHostObject::Char(c) => Value::from(*c),
             _ => todo!("num {:?}", num),
         }
     } else if class == env.objc.get_known_class("NSData", &mut env.mem) {
         let data = env.objc.borrow::<NSDataHostObject>(plist);
         let buffer_slice = env.mem.bytes_at(data.bytes.cast(), data.length);
         Value::Data(buffer_slice.to_vec())
+    } else if class == env.objc.get_known_class("NSDate", &mut env.mem) {
+        let date = env.objc.borrow::<NSDateHostObject>(plist);
+        let time = apple_epoch().add(Duration::from_secs_f64(date.time_interval));
+        Value::Date(time.into())
     } else {
         unimplemented!("class {}", env.objc.get_class_name(class))
     }

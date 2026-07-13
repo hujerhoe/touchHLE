@@ -7,10 +7,9 @@
 
 use crate::dyld::ConstantExports;
 use crate::dyld::HostConstant;
-use crate::frameworks::foundation::ns_string;
-use crate::frameworks::foundation::NSInteger;
-use crate::objc::{id, objc_classes, ClassExports, TrivialHostObject};
-use crate::window::DeviceOrientation;
+use crate::frameworks::foundation::{ns_string, NSInteger};
+use crate::objc::{id, msg, objc_classes, todo_objc_setter, ClassExports, TrivialHostObject};
+use crate::window::{get_battery_status, BatteryState, DeviceFamily, DeviceOrientation};
 
 pub const UIDeviceOrientationDidChangeNotification: &str =
     "UIDeviceOrientationDidChangeNotification";
@@ -19,7 +18,6 @@ pub type UIDeviceOrientation = NSInteger;
 #[allow(dead_code)]
 pub const UIDeviceOrientationUnknown: UIDeviceOrientation = 0;
 pub const UIDeviceOrientationPortrait: UIDeviceOrientation = 1;
-#[allow(dead_code)]
 pub const UIDeviceOrientationPortraitUpsideDown: UIDeviceOrientation = 2;
 pub const UIDeviceOrientationLandscapeLeft: UIDeviceOrientation = 3;
 pub const UIDeviceOrientationLandscapeRight: UIDeviceOrientation = 4;
@@ -27,6 +25,18 @@ pub const UIDeviceOrientationLandscapeRight: UIDeviceOrientation = 4;
 pub const UIDeviceOrientationFaceUp: UIDeviceOrientation = 5;
 #[allow(dead_code)]
 pub const UIDeviceOrientationFaceDown: UIDeviceOrientation = 6;
+
+pub type UIDeviceBatteryState = NSInteger;
+pub const UIDeviceBatteryStateUnknown: UIDeviceBatteryState = 0;
+pub const UIDeviceBatteryStateUnplugged: UIDeviceBatteryState = 1;
+pub const UIDeviceBatteryStateCharging: UIDeviceBatteryState = 2;
+pub const UIDeviceBatteryStateFull: UIDeviceBatteryState = 3;
+
+type UIUserInterfaceIdiom = NSInteger;
+#[allow(dead_code)]
+const UIUserInterfaceIdiomUnspecified: UIUserInterfaceIdiom = -1;
+const UIUserInterfaceIdiomPhone: UIUserInterfaceIdiom = 0;
+const UIUserInterfaceIdiomPad: UIUserInterfaceIdiom = 1;
 
 #[derive(Default)]
 pub struct State {
@@ -59,14 +69,23 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (())beginGeneratingDeviceOrientationNotifications {
-    log!("TODO: beginGeneratingDeviceOrientationNotifications");
+    log_once!("TODO: beginGeneratingDeviceOrientationNotifications");
 }
 - (())endGeneratingDeviceOrientationNotifications {
-    log!("TODO: endGeneratingDeviceOrientationNotifications");
+    log_once!("TODO: endGeneratingDeviceOrientationNotifications");
 }
+- (bool)isGeneratingDeviceOrientationNotifications {
+    log_once!("TODO: isGeneratingDeviceOrientationNotifications");
+    false
+}
+
 - (id)model {
     // TODO: Hardcoded to iPhone for now
     ns_string::get_static_str(env, "iPhone")
+}
+- (id)localizedModel {
+    // TODO: localization
+    msg![env; this model]
 }
 
 - (id)name {
@@ -85,8 +104,8 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (id)uniqueIdentifier {
     // Aspen Simulator returns (null) here
-    // TODO: what should be a correct value?
-    ns_string::get_static_str(env, "touchHLEdevice")
+    // A device unique identifier must be 40 characters long
+    ns_string::get_static_str(env, "touchHLEdevice..........................")
 }
 
 - (bool)isMultitaskingSupported {
@@ -96,8 +115,49 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (UIDeviceOrientation)orientation {
     match env.window().current_rotation() {
         DeviceOrientation::Portrait => UIDeviceOrientationPortrait,
+        DeviceOrientation::PortraitUpsideDown => UIDeviceOrientationPortraitUpsideDown,
         DeviceOrientation::LandscapeLeft => UIDeviceOrientationLandscapeLeft,
         DeviceOrientation::LandscapeRight => UIDeviceOrientationLandscapeRight
+    }
+}
+- (())setOrientation:(UIDeviceOrientation)orientation {
+    env.on_parent_stack_in_coroutine(|window, _| {window.rotate_device(match orientation {
+        UIDeviceOrientationPortrait => DeviceOrientation::Portrait,
+        UIDeviceOrientationPortraitUpsideDown => DeviceOrientation::PortraitUpsideDown,
+        UIDeviceOrientationLandscapeLeft => DeviceOrientation::LandscapeLeft,
+        UIDeviceOrientationLandscapeRight => DeviceOrientation::LandscapeRight,
+        _ => unimplemented!("Orientation {} not handled yet", orientation),
+    })});
+}
+
+- (bool)isBatteryMonitoringEnabled {
+    true
+}
+- (())setBatteryMonitoringEnabled:(bool)enabled {
+    todo_objc_setter!(this, enabled);
+    assert!(enabled);
+}
+- (f32)batteryLevel {
+    let pct = get_battery_status().0;
+    if pct < 0 {
+        log_dbg!("batteryLevel percentage could not be determined, returning 100% for compatibility");
+        return 1.0
+    }
+    pct as f32 / 100.0 // narrow down to 0.0 - 1.0
+}
+- (UIDeviceBatteryState)batteryState {
+    match get_battery_status().1 {
+        BatteryState::Unknown => UIDeviceBatteryStateUnknown,
+        BatteryState::OnBattery => UIDeviceBatteryStateUnplugged,
+        BatteryState::NoBattery | BatteryState::Charging => UIDeviceBatteryStateCharging,
+        BatteryState::Full => UIDeviceBatteryStateFull,
+    }
+}
+
+- (UIUserInterfaceIdiom)userInterfaceIdiom {
+    match env.window().device_family() {
+        DeviceFamily::iPhone => UIUserInterfaceIdiomPhone,
+        DeviceFamily::iPad => UIUserInterfaceIdiomPad,
     }
 }
 

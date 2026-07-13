@@ -59,14 +59,12 @@ impl ClassHostObject {
             let ivar_t {
                 offset,
                 name,
-                type_: _,
-                // TODO: Use these values when shifting offsets
-                alignment: _,
-                size: _,
+                alignment,
+                ..
             } = mem.read(ivar_ptr);
 
             let name_string = mem.cstr_at_utf8(name).unwrap().into();
-            self.ivars.insert(name_string, offset);
+            self.ivars.insert(name_string, (offset, alignment));
         }
     }
 }
@@ -88,7 +86,7 @@ impl ObjC {
                 ref ivars,
                 ..
             } = self.borrow(class);
-            if let Some(ivar_offset_ptr) = ivars.get(name) {
+            if let Some((ivar_offset_ptr, _)) = ivars.get(name) {
                 let ivar_offset = mem.read(*ivar_offset_ptr);
                 let ivar_ptr = MutVoidPtr::from_bits(obj.to_bits() + ivar_offset);
                 return Some(ivar_ptr.cast());
@@ -102,7 +100,7 @@ impl ObjC {
 
     pub fn debug_all_class_ivars_as_strings(&self, class: Class) -> Vec<String> {
         let mut class = class;
-        let mut selector_strings = Vec::new();
+        let mut ivars_strings = Vec::new();
         loop {
             let &ClassHostObject {
                 superclass,
@@ -110,14 +108,14 @@ impl ObjC {
                 ..
             } = self.borrow(class);
             let mut class_ivars_strings = ivars.keys().cloned().collect();
-            selector_strings.append(&mut class_ivars_strings);
+            ivars_strings.append(&mut class_ivars_strings);
             if superclass == nil {
                 break;
             } else {
                 class = superclass;
             }
         }
-        selector_strings
+        ivars_strings
     }
 }
 
@@ -139,7 +137,7 @@ pub(super) fn objc_getProperty(
     assert!(offset >= 4);
 
     if atomic {
-        log!("TODO: Lock when atomic is set to true in objc_getProperty");
+        log_once!("TODO: Lock when atomic is set to true in objc_getProperty");
     }
 
     let ivar: MutPtr<id> = Ptr::from_bits(this.to_bits().checked_add_signed(offset).unwrap());
@@ -167,7 +165,7 @@ pub(super) fn objc_setProperty(
     assert!(offset >= 4);
 
     if atomic {
-        log!("TODO: Lock when atomic is set to true in objc_setProperty");
+        log_once!("TODO: Lock when atomic is set to true in objc_setProperty");
     }
 
     let ivar: MutPtr<id> = Ptr::from_bits(this.to_bits().checked_add_signed(offset).unwrap());
@@ -181,7 +179,7 @@ pub(super) fn objc_setProperty(
             2 => msg![env; value mutableCopyWithZone:void_null],
             // Apple's source code implies that any non-zero value that isn't 2
             // should mean "copy", but that seems weird, let's be conservative.
-            _ => panic!("Unknown \"should copy\" value: {}", should_copy),
+            _ => panic!("Unknown \"should copy\" value: {should_copy}"),
         }
     } else {
         nil
@@ -208,3 +206,28 @@ pub(super) fn objc_copyStruct(
     // TODO: implement atomic support
     env.mem.memmove(dest, src, size);
 }
+
+/// Logs a placeholder message for an unimplemented ObjC setter
+///
+/// This macro must be used inside [crate::_objc_method],
+/// as it relies on constants for the current class and selector
+/// set by it and [crate::objc::objc_classes]
+#[macro_export]
+macro_rules! todo_objc_setter {
+    ($this:ident, $($arg:tt)+) => {
+        const _: () = {
+            let bytes = _OBJC_CURRENT_SELECTOR.as_bytes();
+            let starts_with_set =
+                bytes.len() > 3 && bytes[0] == b's' && bytes[1] == b'e' && bytes[2] == b't';
+            assert!(starts_with_set, "Selector does not start with set.");
+        };
+        log!(
+            "TODO: [({}*) {:?} {}:{:?}]",
+            _OBJC_CURRENT_CLASS,
+            $this,
+            _OBJC_CURRENT_SELECTOR,
+            $($arg)+
+        );
+    };
+}
+pub use crate::todo_objc_setter;

@@ -13,7 +13,35 @@ Changes are categorised as follows:
 * Usability: changes to features of the emulator unrelated to the above, e.g. new input methods.
 * Other: when none of the above seem to fit.
 
-## Next
+## NEXT
+
+Compatibility:
+
+- New working apps:
+  - [Devil May Cry 4 Refrain](https://appdb.touchhle.org/apps/999) (@hikari-no-yume)
+  - [Amerzone Pt1](https://appdb.touchhle.org/apps/1091) (@ciciplusplus)
+  - [Eternal Legacy](https://appdb.touchhle.org/apps/1107) (@ciciplusplus)
+  - [Dungeon Hunter 2](https://appdb.touchhle.org/apps/460) (@ciciplusplus)
+  - [N.O.V.A. 2: The Hero Rises Again](https://appdb.touchhle.org/apps/444) (@ciciplusplus)
+  - [Star Battalion](https://appdb.touchhle.org/apps/421) (@ciciplusplus)
+  - [Ice Age: Dawn of the Dinosaurs](https://appdb.touchhle.org/apps/60) (@ciciplusplus)
+  - [Zombieville](https://appdb.touchhle.org/apps/1183) (@ciciplusplus)
+  - [Doom Resurrection](https://appdb.touchhle.org/apps/278) (@ciciplusplus)
+  - [Ace Combat Xi](https://appdb.touchhle.org/apps/195) (@alborrajo)
+  - [Fruit Ninja](https://appdb.touchhle.org/apps/261) (@acieslewicz, @ciciplusplus)
+  - [Asphalt 6](https://appdb.touchhle.org/apps/1217) (@ciciplusplus)
+  - [World of Goo](https://appdb.touchhle.org/apps/1210) (@ciciplusplus)
+- API support improvements:
+  - Various small contributions. (@hikari-no-yume, @ciciplusplus, @zazatree, @abnormalmaps, @alborrajo, @acieslewicz, @JCR64, @mcd-3, @apexad)
+  - Fixed several issues related to apps that rely on UIKit to rotate their UI. (@hikari-no-yume)
+  - Support for iPad device family. Device family is deduced from the app bundle, but user can also override it with `--device-family=` option. (@ciciplusplus)
+  - [SQLite3](https://github.com/touchHLE/sqlite-dylib) and [libxml2](https://github.com/touchHLE/libxml2-dylib) dynamic libraries are now available, compiled from source using our [clean open-source toolchain](https://github.com/touchHLE/common-3.0-sdk). (@acieslewicz, @ciciplusplus)
+- Improved support for iOS 3.1+:
+  - The bundled dynamic libraries, libgcc and libstdc++, have been updated to their iOS 4.0.1 versions. (@ciciplusplus)
+  - Support for NIBArchive NIB file format decoding. (@ciciplusplus)
+- Switched to a coroutine-based threading system. This solves [some compatibility issues](https://github.com/touchHLE/touchHLE/issues/119) and improves performance in some games. (@abnormalmaps)
+
+## v0.2.3 (2026-01-02)
 
 Compatibility:
 
@@ -34,26 +62,67 @@ Compatibility:
   - [Shrek Forever After](https://appdb.touchhle.org/apps/427) (@ciciplusplus)
   - [Spore Origins](https://appdb.touchhle.org/apps/302) (@ciciplusplus, @hikari-no-yume, @teromene)
   - [Defender Chronicles](https://appdb.touchhle.org/apps/267) (@hujerhoe)
+  - [Real Racing](https://appdb.touchhle.org/apps/188) (@ciciplusplus)
+  - [Tom Clancy's Splinter Cell: Conviction](https://appdb.touchhle.org/apps/416) (@ciciplusplus)
+  - [Assassin's Creed](https://appdb.touchhle.org/apps/413) (@ciciplusplus)
+  - [N.O.V.A. Near Orbit Vanguard Alliance](https://appdb.touchhle.org/apps/443) (@ciciplusplus)
+  - [Brothers in Arms 2: Global Front](https://appdb.touchhle.org/apps/464) (@ciciplusplus)
+  - [Ferrari GT: Evolution](https://appdb.touchhle.org/apps/116) (@ciciplusplus)
+  - [Castle Frenzy](https://appdb.touchhle.org/apps/463) (@ciciplusplus)
+  - [Hero of Sparta 2](https://appdb.touchhle.org/apps/453) (@ciciplusplus)
+  - [Hero of Sparta](https://appdb.touchhle.org/apps/452) (@ciciplusplus)
+  - [Bridge Odyssey](https://appdb.touchhle.org/apps/465) (@ciciplusplus)
+  - [Terminator Salvation](https://appdb.touchhle.org/apps/344) (@ciciplusplus)
+  - [Brothers In Arms: Hour Of Heroes](https://appdb.touchhle.org/apps/369) (@ciciplusplus)
+  - [Crusade Of Destiny](https://appdb.touchhle.org/apps/792) (@ciciplusplus)
+  - [Arvale](https://appdb.touchhle.org/apps/671) (@ciciplusplus)
+  - [Battlefield: Bad Company 2](https://appdb.touchhle.org/apps/817) (@ciciplusplus)
+  - [Ms. PAC-MAN](https://appdb.touchhle.org/apps/63) (@acieslewicz)
+  - [Dark Nebula](https://appdb.touchhle.org/apps/910) (@ciciplusplus)
+  - [FIFA 10](https://appdb.touchhle.org/apps/496) (@ciciplusplus)
+  - [Crash Bandicoot Nitro Kart 2](https://appdb.touchhle.org/apps/670) (@ciciplusplus)
+  - [Driver](https://appdb.touchhle.org/apps/247) (@ciciplusplus)
+  - [Sacred Odyssey: Rise of Ayden](https://appdb.touchhle.org/apps/431) (@ciciplusplus)
+  - [Nanosaur 2](https://appdb.touchhle.org/apps/991) (@ciciplusplus)
+  - [Cro-Mag Rally](https://appdb.touchhle.org/apps/992) (@ciciplusplus)
+  - [Bugdom 2](https://appdb.touchhle.org/apps/995) (@ciciplusplus)
 - API support improvements:
-  - Various small contributions. (@hikari-no-yume, @alborrajo, @ciciplusplus, @atasro2, @LennyKappa, @hujerhoe)
+  - Various small contributions. (@hikari-no-yume, @alborrajo, @ciciplusplus, @atasro2, @abnormalmaps, @hujerhoe, @acieslewicz, @WhatAmISupposedToPutHere, @JaGoTu, @apexad, @chyyran, @mistydemeo, @bognarit80, @RMZeroFour)
   - UITextField now supports real text input with a keyboard. On Windows/macOS physical keyboard is used, on Android it's done via a system soft keyboard. (@ciciplusplus)
   - UIScrollView and UITextView partial implementations. (@Skryptonyte, @ciciplusplus)
+  - Core Animation and UIKit now support affine transforms, allowing UI elements to be rotated, a feature needed by [several games](https://github.com/touchHLE/touchHLE/issues/388). Note however that auto-rotation is not yet supported. (@hikari-no-yume)
+  - Partial support for Core Animation explicit animations has been added. (@alborrajo)
+  - The libz dynamic library is now available, [compiled from source](https://github.com/touchHLE/zlib-dylib) using a [clean open-source toolchain](https://github.com/touchHLE/common-3.0-sdk). (@acieslewicz)
+  - ALAC and Microsoft IMA ADPCM are now supported in Audio Toolbox, with the same caveats as other compressed codecs. (@abnormalmaps)
+  - Switched to ARMv7 rather than ARMv6 versions of libstdc++ and libgcc. (@acieslewicz)
+  - Added support for certain iPhone OS 3.1 binary format changes (iPhone OS 3.1 apps are still considered unsupported). (@bognarit80)
+  - Limited support for local multiplayer via Wi-Fi in some games. (@ciciplusplus)
 
 Usability:
 
-- Added default options for Earthworm Jim and improved default options for Crash Bandicoot Nitro Kart 3D. (@celerizer)
+- Default options for various games have been added or improved. (@celerizer, @nighto)
 - The app picker now has a “Quick options” feature. This provides a quicker and easier way to set some common options. (@hikari-no-yume)
 - App icons in the app picker are now sorted by the display name of the app, case-insensitively. (@hikari-no-yume)
 - The accelerometer (tilt controls) can now be simulated using a mouse, instead of a game controller or real accelerometer. Simply hold down the right mouse button and move the mouse cursor. (@alborrajo)
-- Default options for various games. (@nighto)
+- The new `--disable-analog-stick-tilt-controls` option can be used to disable the use of the game controller's analog sticks for accelerometer simulation. This is useful on devices with both an integrated game controller and an integrated accelerometer, as touchHLE by default will only use the real accelerometer if no game controller is detected. (@hikari-no-yume)
+- Android builds and releases of touchHLE now have an icon and meaningful version metadata. They also now use a different package name for preview builds versus releases, which means you can install them side-by-side. (@hikari-no-yume)
+- macOS builds and releases of touchHLE now come as an application bundle (`.app` directory) rather than as a bare “Unix executable” file. This should fix problems some users encountered with running touchHLE outside of a terminal, and allows putting touchHLE in the Applications folder like a normal graphical app. To support this, user data (apps, options, etc) is now stored in “Application Support” rather than the current directory, and the bundled files (fonts, dylibs, etc) are now part of the app bundle. If you prefer the old layout, you can still get it if you move all the files out of the bundle. (@hikari-no-yume)
+- The “File manager” button on Android now works more reliably, especially the first time it is tapped. (@hikari-no-yume)
+- The new `--force-composition=` option has been added, which is a workaround that may solve rendering issues in some games, at the cost of performance. For some games it is applied by the default options. (@ciciplusplus)
+- Most errors causing touchHLE to crash now produce a graphical message box, rather than the error message only being found in the log. (@abnormalmaps)
+- touchHLE now writes log messages to a file on all platforms, not just on Android. The file has been renamed from `log.txt` to `touchHLE_log.txt`. (@hikari-no-yume)
+- Two new options for input handling of analog stick (`--stick-to-touch=`) and 8-directional DPad (`--dpad-to-touch=`) via a game controller. (@celerizer)
 
 Quality:
 
-- Fix problem with non-working accelerometer on some Android phones. (@Oscar1640)
+- Fixed an issue on some Android phones where the accelerometer was not usable. (@Oscar1640)
+- Fixed multi-touch in some games. (@ciciplusplus)
+- App icons are now displayed with a glossy sheen where required. (@hikari-no-yume)
+- The app icons and labels in the app picker are now displayed at integer pixel offsets, making them sharper and more symmetrical. (@hikari-no-yume)
 
 Other:
 
-- MP3 decoding now uses Symphonia rather than dr\_mp3. We do not expect this to affect compatibility. (@LennyKappa)
+- MP3 decoding now uses Symphonia rather than dr\_mp3. We do not expect this to affect compatibility. (@abnormalmaps)
 
 ## v0.2.2 (2024-04-01)
 
@@ -65,7 +134,7 @@ Compatibility:
   - [Earthworm Jim](https://appdb.touchhle.org/apps/280) (@ciciplusplus)
   - [Castle of Magic](https://appdb.touchhle.org/apps/281) (@ciciplusplus)
 - API support improvements:
-  - Various small contributions. (@alborrajo, @WhatAmISupposedToPutHere, @ciciplusplus, @hikari-no-yume, @LennyKappa, @Skryptonyte, @teromene)
+  - Various small contributions. (@alborrajo, @WhatAmISupposedToPutHere, @ciciplusplus, @hikari-no-yume, @abnormalmaps, @Skryptonyte, @teromene)
   - AAC audio files (AAC-LC in a typical MPEG-4 container) are now supported in Audio Toolbox. This is done in a fairly hacky way so it might not work for some apps. (@hikari-no-yume)
 - There is now support for iPhone OS 3.0 apps, in addition to the existing support for iPhone OS 2.x apps:
   - Support for fat binaries has been added. touchHLE will no longer crash when trying to run an app with both ARMv6 and ARMv7 versions, and instead will try to pick the best available option (ARMv7, or failing this, ARMv6). This improves compatibility with iPhone OS 3.0 apps, many of which use fat binaries in order to improve performance on the iPhone 3GS and iPod touch (3rd generation). (@WhatAmISupposedToPutHere)
@@ -112,10 +181,10 @@ Usability:
 Compatibility:
 
 - API support improvements:
-  - Various small contributions. (@hikari-no-yume, @KiritoDv, @ciciplusplus, @TylerJaacks, @LennyKappa)
+  - Various small contributions. (@hikari-no-yume, @KiritoDv, @ciciplusplus, @TylerJaacks, @abnormalmaps)
   - PVRTC and paletted texture compression is now supported. (@hikari-no-yume)
   - Some key pieces of UIKit and Core Animation are now implemented: layer and view hierarchy, layer and view drawing, layer compositing, touch input hit testing, `UIImageView`, `UILabel`, `UIControl`, and `UIButton`. Previously, touchHLE could only support apps that draw everything with OpenGL ES, which is only common for games. This lays the groundwork for supporting games that rely on UIKit, and possibly some non-game apps. (@hikari-no-yume)
-  - Threads can now sleep, join other threads, and block on mutexes. (@LennyKappa, @hikari-no-yume)
+  - Threads can now sleep, join other threads, and block on mutexes. (@abnormalmaps, @hikari-no-yume)
 
 - New supported apps:
   - Fastlane Street Racing (@hikari-no-yume)
@@ -193,7 +262,7 @@ Other:
 Compatibility:
 
 - API support improvements:
-  - Various small contributions. (@hikari-no-yume, @nitinseshadri, @LennyKappa, @RealSupremium)
+  - Various small contributions. (@hikari-no-yume, @nitinseshadri, @abnormalmaps, @RealSupremium)
   - Basic POSIX file I/O is now supported. Previously only standard C file I/O was supported. (@hikari-no-yume)
   - Very basic use of Audio Session Services is now supported. (@nitinseshadri)
   - Very basic use of `MPMoviePlayerController` is now supported. No actual video playback is implemented. (@hikari-no-yume)

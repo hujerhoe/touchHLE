@@ -44,6 +44,10 @@ const MAGIC_MUTEX: u32 = u32::from_be_bytes(*b"MUTX");
 /// Magic number used by `PTHREAD_MUTEX_INITIALIZER`. This is part of the ABI!
 const MAGIC_MUTEX_STATIC: u32 = 0x32AAABA7;
 
+#[allow(dead_code)]
+const PTHREAD_PROCESS_SHARED: i32 = 1;
+const PTHREAD_PROCESS_PRIVATE: i32 = 2;
+
 fn pthread_mutexattr_init(env: &mut Environment, attr: MutPtr<pthread_mutexattr_t>) -> i32 {
     env.mem.write(
         attr,
@@ -53,6 +57,17 @@ fn pthread_mutexattr_init(env: &mut Environment, attr: MutPtr<pthread_mutexattr_
             _unused: 0,
         },
     );
+    0 // success
+}
+fn pthread_mutexattr_setpshared(
+    env: &mut Environment,
+    attr: MutPtr<pthread_mutexattr_t>,
+    pshared: i32,
+) -> i32 {
+    check_magic!(env, attr, MAGIC_MUTEXATTR);
+    // PTHREAD_PROCESS_PRIVATE is a default one
+    // TODO: set this attribute in `attr` instead
+    assert_eq!(pshared, PTHREAD_PROCESS_PRIVATE);
     0 // success
 }
 fn pthread_mutexattr_settype(
@@ -150,7 +165,12 @@ pub fn pthread_mutex_trylock(env: &mut Environment, mutex: MutPtr<pthread_mutex_
         }
     };
     let mutex_data = env.mem.read(mutex);
-    if env.mutex_state.mutex_is_locked(mutex_data.mutex_id) {
+    if env.mutex_state.mutex_is_locked(mutex_data.mutex_id)
+        && !(env.mutex_state.mutex_is_recursive(mutex_data.mutex_id)
+            && env
+                .mutex_state
+                .mutex_is_locked_by(mutex_data.mutex_id, env.current_thread))
+    {
         EBUSY
     } else {
         pthread_mutex_lock(env, mutex)
@@ -194,6 +214,7 @@ pub fn pthread_mutex_destroy(env: &mut Environment, mutex: MutPtr<pthread_mutex_
 
 pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(pthread_mutexattr_init(_)),
+    export_c_func!(pthread_mutexattr_setpshared(_, _)),
     export_c_func!(pthread_mutexattr_settype(_, _)),
     export_c_func!(pthread_mutexattr_destroy(_)),
     export_c_func!(pthread_mutex_init(_, _)),

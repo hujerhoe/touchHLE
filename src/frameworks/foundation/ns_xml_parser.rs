@@ -18,8 +18,8 @@ use super::NSUInteger;
 use crate::environment::Environment;
 use crate::mem::ConstVoidPtr;
 use crate::objc::{
-    autorelease, id, msg, msg_class, nil, objc_classes, release, retain, ClassExports, HostObject,
-    NSZonePtr, SEL,
+    autorelease, id, msg, msg_class, nil, objc_classes, release, retain, todo_objc_setter,
+    ClassExports, HostObject, NSZonePtr, SEL,
 };
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::reader::Reader;
@@ -56,6 +56,10 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (id)initWithData:(id)data { // NSData *
+    if data == nil {
+        release(env, this);
+        return nil;
+    }
     retain(env, data);
     env.objc.borrow_mut::<NSXMLParserHostObject>(this).data = data;
     this
@@ -70,7 +74,15 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (())setShouldResolveExternalEntities:(bool)should {
-    log_dbg!("TODO: setShouldResolveExternalEntities:{}", should);
+    todo_objc_setter!(this, should);
+}
+- (())setShouldProcessNamespaces:(bool)should {
+    todo_objc_setter!(this, should);
+    assert!(!should);
+}
+- (())setShouldReportNamespacePrefixes:(bool)should {
+    todo_objc_setter!(this, should);
+    assert!(!should);
 }
 
 - (bool)parse {
@@ -141,7 +153,7 @@ pub const CLASSES: ClassExports = objc_classes! {
                 }
             }
             Event::Text(e) => {
-                let text = e.unescape().unwrap().into_owned();
+                let text = e.decode().unwrap().to_string();
                 // FIXME: skipping the end of the parsed string?
                 if text != "\0" {
                     let sel: SEL = env
@@ -206,7 +218,7 @@ pub const CLASSES: ClassExports = objc_classes! {
                         .register_host_selector("parser:foundCharacters:".to_string(), &mut env.mem);
                     let responds: bool = msg![env; delegate respondsToSelector:sel];
                     if responds {
-                        let text = e.escape().unwrap().unescape().unwrap().to_string();
+                        let text = e.decode().unwrap().to_string();
                         let text = from_rust_string(env, text);
                         let text = autorelease(env, text);
                         () = msg![env; delegate parser:this foundCharacters:text];
@@ -214,7 +226,7 @@ pub const CLASSES: ClassExports = objc_classes! {
                 }
             }
             Event::Comment(e) => {
-                let comment = e.unescape().unwrap().into_owned();
+                let comment = e.decode().unwrap().to_string();
                 let sel: SEL = env
                     .objc
                     .register_host_selector("parser:foundComment:".to_string(), &mut env.mem);
@@ -224,6 +236,13 @@ pub const CLASSES: ClassExports = objc_classes! {
                     let comment = autorelease(env, comment);
                     () = msg![env; delegate parser:this foundComment:comment];
                 }
+            }
+            Event::Decl(_) => {
+                let sel: SEL = env
+                    .objc
+                    .register_host_selector("parser:foundElementDeclarationWithName:model:".to_string(), &mut env.mem);
+                let responds: bool = msg![env; delegate respondsToSelector:sel];
+                assert!(!responds); // TODO
             }
             e => unimplemented!("{:?}", e)
         }

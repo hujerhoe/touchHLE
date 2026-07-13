@@ -6,17 +6,17 @@
 //! Audio file decoding and OpenAL bindings.
 //!
 //! The audio file decoding support is an abstraction over various libraries
-//! (currently [caf], [hound], and [symphonia]), usage of which should be
+//! (currently [hound] and [symphonia]), usage of which should be
 //! confined to this module.
 //!
 //! Resources:
 //! - [Apple Core Audio Format Specification 1.0](https://developer.apple.com/library/archive/documentation/MusicAudio/Reference/CAFSpec/CAF_intro/CAF_intro.html)
 
 mod ima4;
+pub mod openal;
 mod symphonia_formats;
 
 pub use ima4::decode_ima4;
-pub use touchHLE_openal_soft_wrapper as openal;
 
 use crate::fs::{Fs, GuestPath};
 use std::io::Cursor;
@@ -33,7 +33,6 @@ pub enum AudioFormat {
         is_float: bool,
         is_little_endian: bool,
     },
-    AppleIma4,
 }
 /// Fields have the same meanings as in the Core Audio Format's
 /// Audio Description chunk, which is in turn similar to Core Audio Types'
@@ -52,7 +51,6 @@ pub struct AudioDescription {
 pub struct AudioFile(AudioFileInner);
 enum AudioFileInner {
     Wave(hound::WavReader<Cursor<Vec<u8>>>),
-    Caf(caf::CafPacketReader<Cursor<Vec<u8>>>),
     Symphonia(symphonia_formats::SymphoniaDecodedToPcm),
 }
 
@@ -79,18 +77,14 @@ impl AudioFile {
     }
 
     pub fn read_from_vec(bytes: Vec<u8>) -> Result<Self, AudioFileOpenError> {
-        // Both WavReader::new() and CafPacketReader::new() consume the reader
-        // (in this case, a Cursor) passed to them. This is a bit annoying
-        // considering we don't know which is appropriate for the file without
-        // trying both. This is worked around here by using temporary readers
-        // for checking if the file is the supported format, then recreating the
-        // reader if that works.
+        // WavReader::new() consume the reader (in this case, a Cursor)
+        // passed to it. This is a bit annoying considering we don't know
+        // which is appropriate for the file. This is worked around here by
+        // using temporary readers for checking if the file is the supported
+        // format, then recreating the reader if that works.
         if hound::WavReader::new(Cursor::new(&bytes)).is_ok() {
             let reader = hound::WavReader::new(Cursor::new(bytes)).unwrap();
             Ok(AudioFile(AudioFileInner::Wave(reader)))
-        } else if caf::CafPacketReader::new(Cursor::new(&bytes), vec![]).is_ok() {
-            let reader = caf::CafPacketReader::new(Cursor::new(bytes), vec![]).unwrap();
-            Ok(AudioFile(AudioFileInner::Caf(reader)))
         // TODO: Real MP3/MP4/Non-linear PCM container handling. Currently we
         // are immediately decoding the entire file to PCM and acting as if
         // it's a PCM file, simply because because this is easier. Full MP3
@@ -130,44 +124,6 @@ impl AudioFile {
                     bits_per_channel: bits_per_sample as u32,
                 }
             }
-            AudioFileInner::Caf(ref caf_reader) => {
-                let caf::chunks::AudioDescription {
-                    sample_rate,
-                    ref format_id,
-                    format_flags,
-                    bytes_per_packet,
-                    frames_per_packet,
-                    channels_per_frame,
-                    bits_per_channel,
-                } = caf_reader.audio_desc;
-
-                AudioDescription {
-                    sample_rate,
-                    format: match format_id {
-                        caf::FormatType::LinearPcm => {
-                            assert!((format_flags & !3) == 0);
-                            let is_float = (format_flags & 1) == 1;
-                            let is_little_endian = (format_flags & 2) == 2;
-                            AudioFormat::LinearPcm {
-                                is_float,
-                                is_little_endian,
-                            }
-                        }
-                        caf::FormatType::AppleIma4 => {
-                            assert!(format_flags == 0);
-                            AudioFormat::AppleIma4
-                        }
-                        //
-                        // We should expose all of the formats eventually, but
-                        // the others haven't been tested yet.
-                        _ => panic!("{:?} not supported yet", format_id),
-                    },
-                    bytes_per_packet,
-                    frames_per_packet,
-                    channels_per_frame,
-                    bits_per_channel,
-                }
-            }
             AudioFileInner::Symphonia(symphonia_formats::SymphoniaDecodedToPcm {
                 sample_rate,
                 channels,
@@ -195,7 +151,7 @@ impl AudioFile {
             ..
         } = self.audio_description();
         if !matches!(format, AudioFormat::LinearPcm { .. }) {
-            panic!("{:?} is a compressed format!", format);
+            panic!("{format:?} is a compressed format!");
         }
         ((bytes_per_packet / frames_per_packet) / channels_per_frame).into()
     }
@@ -205,10 +161,6 @@ impl AudioFile {
             AudioFileInner::Wave(ref wave_reader) => {
                 let sample_count = wave_reader.len(); // position-independent
                 u64::from(sample_count) * self.bytes_per_sample()
-            }
-            AudioFileInner::Caf(_) => {
-                // variable size not implemented
-                u64::from(self.packet_size_fixed()) * self.packet_count()
             }
             AudioFileInner::Symphonia(symphonia_formats::SymphoniaDecodedToPcm {
                 ref bytes,
@@ -223,9 +175,6 @@ impl AudioFile {
             | AudioFileInner::Symphonia(symphonia_formats::SymphoniaDecodedToPcm { .. }) => {
                 // never variable-size
                 self.byte_count() / u64::from(self.packet_size_fixed())
-            }
-            AudioFileInner::Caf(ref caf_reader) => {
-                caf_reader.get_packet_count().unwrap().try_into().unwrap()
             }
         }
     }
@@ -250,8 +199,10 @@ impl AudioFile {
         match self.0 {
             AudioFileInner::Wave(_) => {
                 let bytes_per_sample = self.bytes_per_sample();
-                assert!(offset % bytes_per_sample == 0);
-                assert!(u64::try_from(buffer.len()).unwrap() % bytes_per_sample == 0);
+                assert!(offset.is_multiple_of(bytes_per_sample));
+                assert!(u64::try_from(buffer.len())
+                    .unwrap()
+                    .is_multiple_of(bytes_per_sample));
 
                 let sample_count = u64::try_from(buffer.len()).unwrap() / bytes_per_sample;
                 let sample_count: usize = sample_count.try_into().unwrap();
@@ -284,35 +235,6 @@ impl AudioFile {
                 }
                 Ok(byte_offset)
             }
-            AudioFileInner::Caf(_) => {
-                // variable size not implemented
-                let packet_size = self.packet_size_fixed();
-                assert!(offset % u64::from(packet_size) == 0);
-                assert!(u64::try_from(buffer.len()).unwrap() % u64::from(packet_size) == 0);
-
-                let packet_count = u64::try_from(buffer.len()).unwrap() / u64::from(packet_size);
-
-                let AudioFileInner::Caf(ref mut caf_reader) = self.0 else {
-                    unreachable!()
-                };
-
-                caf_reader
-                    .seek_to_packet(usize::try_from(offset / u64::from(packet_size)).unwrap())
-                    .map_err(|_| ())?;
-
-                let packet_size = usize::try_from(packet_size).unwrap();
-
-                let mut i = 0;
-                let mut byte_offset = 0;
-                while i < packet_count && caf_reader.next_packet_size().is_some() {
-                    caf_reader
-                        .read_packet_into(&mut buffer[byte_offset..][..packet_size])
-                        .map_err(|_| ())?;
-                    byte_offset += packet_size;
-                    i += 1;
-                }
-                Ok(byte_offset)
-            }
             AudioFileInner::Symphonia(symphonia_formats::SymphoniaDecodedToPcm {
                 ref bytes,
                 ..
@@ -324,5 +246,17 @@ impl AudioFile {
                 Ok(bytes_to_read)
             }
         }
+    }
+
+    pub fn estimated_duration(&self) -> f64 {
+        let AudioDescription {
+            sample_rate,
+            bytes_per_packet,
+            frames_per_packet,
+            ..
+        } = self.audio_description();
+        assert!(bytes_per_packet != 0); // TODO
+        self.byte_count() as f64 * frames_per_packet as f64
+            / (bytes_per_packet as f64 * sample_rate)
     }
 }

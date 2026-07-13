@@ -8,26 +8,35 @@
 //! Useful resources:
 //! - [UITextFieldDelegate overview](https://developer.apple.com/documentation/uikit/uitextfielddelegate?language=objc)
 
-use sdl2_sys::{SDL_StartTextInput, SDL_StopTextInput};
-
-use crate::frameworks::core_graphics::CGRect;
+use crate::dyld::{ConstantExports, HostConstant};
+use crate::frameworks::core_graphics::{CGFloat, CGPoint, CGRect};
+use crate::frameworks::foundation::ns_string::to_rust_string;
 use crate::frameworks::foundation::{ns_string, NSInteger, NSRange, NSUInteger};
-use crate::frameworks::uikit::ui_font::UITextAlignmentLeft;
+use crate::frameworks::uikit::ui_font::{UITextAlignment, UITextAlignmentLeft};
 use crate::frameworks::uikit::ui_view::ui_window::{
     UIKeyboardDidHideNotification, UIKeyboardDidShowNotification, UIKeyboardWillHideNotification,
     UIKeyboardWillShowNotification,
 };
 use crate::impl_HostObject_with_superclass;
 use crate::objc::{
-    id, msg, msg_class, msg_super, nil, objc_classes, release, ClassExports, NSZonePtr, SEL,
+    id, msg, msg_class, msg_super, nil, objc_classes, release, todo_objc_setter, ClassExports,
+    NSZonePtr, SEL,
 };
 use crate::Environment;
 
 type UIKeyboardAppearance = NSInteger;
 type UIKeyboardType = NSInteger;
-type UIReturnKeyType = NSInteger;
+pub type UIReturnKeyType = NSInteger;
 type UITextAutocapitalizationType = NSInteger;
 type UITextAutocorrectionType = NSInteger;
+
+const UITextFieldTextDidChangeNotification: &str = "UITextFieldTextDidChangeNotification";
+
+/// `NSNotificationName` values.
+pub const CONSTANTS: ConstantExports = &[(
+    "_UITextFieldTextDidChangeNotification",
+    HostConstant::NSString(UITextFieldTextDidChangeNotification),
+)];
 
 struct UITextFieldHostObject {
     superclass: super::UIControlHostObject,
@@ -123,6 +132,16 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (())setText:(id)text { // NSString*
     let text_label = env.objc.borrow_mut::<UITextFieldHostObject>(this).text_label;
     () = msg![env; text_label setText:text];
+
+    // This will work only if all the text changes will call setText:!
+    // This is the case right now.
+    // (see `handle_text` and `handle_backspace` helper functions below)
+    // TODO: actually check if setText: send this notif on each change
+    // (e.g. does it send the notif if text hasn't changed)
+    let center: id = msg_class![env; NSNotificationCenter defaultCenter];
+    let name = ns_string::get_static_str(env, UITextFieldTextDidChangeNotification);
+    // TODO: userInfo
+    let _: () = msg![env; center postNotificationName:name object:this userInfo:nil];
 }
 
 - (())setTextColor:(id)color { // UIColor*
@@ -130,21 +149,39 @@ pub const CLASSES: ClassExports = objc_classes! {
     msg![env; text_label setTextColor:color]
 }
 
+- (())setTextAlignment:(UITextAlignment)text_alignment {
+    let text_label = env.objc.borrow_mut::<UITextFieldHostObject>(this).text_label;
+    () = msg![env; text_label setTextAlignment:text_alignment];
+}
+
 - (())setFont:(id)new_font { // UIFont*
     let text_label = env.objc.borrow_mut::<UITextFieldHostObject>(this).text_label;
     msg![env; text_label setFont:new_font]
 }
 
+- (())setMinimumFontSize:(CGFloat)size {
+    let text_label = env.objc.borrow_mut::<UITextFieldHostObject>(this).text_label;
+    () = msg![env; text_label setMinimumFontSize:size];
+}
+
 - (())setClearsOnBeginEditing:(bool)clear {
-    log!("TODO: setClearsOnBeginEditing:{}", clear);
+    todo_objc_setter!(this, clear);
 }
 
 - (())setClearButtonMode:(NSInteger)mode {
-    log!("TODO: setClearButtonMode:{}", mode);
+    todo_objc_setter!(this, mode);
 }
 
 - (())setSecureTextEntry:(bool)secure {
-    log!("TODO: setSecureTextEntry:{}", secure);
+    todo_objc_setter!(this, secure);
+}
+
+- (())setPlaceholder:(id)placeholder { // NSString*
+    todo_objc_setter!(this, to_rust_string(env, placeholder));
+}
+
+- (())setPosition:(CGPoint)position {
+    todo_objc_setter!(this, position);
 }
 
 // weak/non-retaining
@@ -159,25 +196,25 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 // UITextInputTraits implementation
 - (())setAutocapitalizationType:(UITextAutocapitalizationType)type_ {
-    log!("TODO: setAutocapitalizationType:{}", type_);
+    todo_objc_setter!(this, type_);
 }
 - (())setAutocorrectionType:(UITextAutocorrectionType)type_ {
-    log!("TODO: setAutocorrectionType:{}", type_);
+    todo_objc_setter!(this, type_);
 }
 - (())setReturnKeyType:(UIReturnKeyType)type_ {
-    log!("TODO: setReturnKeyType:{}", type_);
+    todo_objc_setter!(this, type_);
 }
 - (())setKeyboardAppearance:(UIKeyboardAppearance)appearance {
-    log!("TODO: setKeyboardAppearance:{}", appearance);
+    todo_objc_setter!(this, appearance);
 }
 - (())setKeyboardType:(UIKeyboardType)type_ {
-    log!("TODO: setKeyboardType:{}", type_);
+    todo_objc_setter!(this, type_);
 }
 - (())setBorderStyle:(NSInteger)style {
-    log!("TODO: setBorderStyle:{}", style);
+    todo_objc_setter!(this, style);
 }
 - (())setEnablesReturnKeyAutomatically:(bool)enables {
-    log!("TODO: setEnablesReturnKeyAutomatically:{}", enables);
+    todo_objc_setter!(this, enables);
 }
 
 - (())touchesBegan:(id)_touches // NSSet* of UITouch*
@@ -222,7 +259,7 @@ pub const CLASSES: ClassExports = objc_classes! {
     let _: () = msg![env; center postNotificationName:name object:this userInfo:nil];
 
     env.framework_state.uikit.ui_responder.first_responder = this;
-    unsafe { SDL_StartTextInput(); }
+    env.on_parent_stack_in_coroutine(|window, _| window.start_text_input());
 
     let name = ns_string::get_static_str(env, UIKeyboardDidShowNotification);
     // TODO: userInfo
@@ -259,7 +296,7 @@ pub const CLASSES: ClassExports = objc_classes! {
     let _: () = msg![env; center postNotificationName:name object:this userInfo:nil];
 
     env.framework_state.uikit.ui_responder.first_responder = nil;
-    unsafe { SDL_StopTextInput(); }
+    env.on_parent_stack_in_coroutine(|window, _| window.stop_text_input());
 
     let name = ns_string::get_static_str(env, UIKeyboardDidHideNotification);
     // TODO: userInfo

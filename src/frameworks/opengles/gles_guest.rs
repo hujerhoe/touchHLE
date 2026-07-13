@@ -19,8 +19,7 @@ use touchHLE_gl_bindings::gles11::{
 
 use crate::dyld::{export_c_func, FunctionExports};
 use crate::frameworks::opengles::eagl::EAGLContextHostObject;
-use crate::gles::gles11_raw as gles11; // constants only
-use crate::gles::GLES;
+use crate::gles::{gles11_raw as gles11, GLES}; // constants only
 use crate::mem::{ConstPtr, ConstVoidPtr, GuestISize, GuestUSize, Mem, MutPtr, MutVoidPtr, Ptr};
 use crate::objc::nil;
 use crate::Environment;
@@ -58,11 +57,53 @@ const SUPPORTED_COMPRESSED_TEXTURE_FORMATS: &[GLenum] = &[
     gles11::PALETTE8_RGBA8_OES,
 ];
 
-fn with_ctx_and_mem<T, U>(env: &mut Environment, f: T) -> U
+/// Sync the current context and performs a function `f` within it.
+///
+/// In case of missing EAGL context for a current thread,
+/// returns a default value.
+fn with_ctx_and_mem<T, U: Default>(env: &mut Environment, f: T) -> U
 where
     T: FnOnce(&mut dyn GLES, &mut Mem) -> U,
 {
-    let gles = super::sync_context(
+    if env
+        .framework_state
+        .opengles
+        .current_ctx_for_thread(env.current_thread)
+        .is_none()
+    {
+        log!(
+            "Warning: No EAGLContext for thread {}! Ignoring OpenGL ES call, returning default value.",
+            env.current_thread
+        );
+        return U::default();
+    }
+
+    let mut gles = super::sync_context(
+        &mut env.framework_state.opengles,
+        &mut env.objc,
+        env.window
+            .as_mut()
+            .expect("OpenGL ES is not supported in headless mode"),
+        env.current_thread,
+    );
+
+    //panic_on_gl_errors(&mut *gles);
+    let res = f(gles.as_mut(), &mut env.mem);
+    //panic_on_gl_errors(&mut *gles);
+    #[allow(clippy::let_and_return)]
+    res
+}
+
+/// Version of with_ctx_and_mem which panics on a missing context.
+///
+/// Needed because for return types such as `*mut GLvoid` we cannnot
+/// return a default value in case EAGL context is missing for
+/// a current thread.
+fn with_ctx_and_mem_no_skip<T, U>(env: &mut Environment, f: T) -> U
+where
+    T: FnOnce(&mut dyn GLES, &mut Mem) -> U,
+{
+    let mut gles = super::sync_context(
         &mut env.framework_state.opengles,
         &mut env.objc,
         env.window
@@ -72,7 +113,7 @@ where
     );
 
     //panic_on_gl_errors(&mut **gles);
-    let res = f(gles, &mut env.mem);
+    let res = f(gles.as_mut(), &mut env.mem);
     //panic_on_gl_errors(&mut **gles);
     #[allow(clippy::let_and_return)]
     res
@@ -97,9 +138,16 @@ fn panic_on_gl_errors(gles: &mut dyn GLES) {
 
 // Generic state manipulation
 fn glGetError(env: &mut Environment) -> GLenum {
+    let ignore_gl_errors = env.options.ignore_gl_errors;
     with_ctx_and_mem(env, |gles, _mem| {
         let err = unsafe { gles.GetError() };
         if err != 0 {
+            if ignore_gl_errors {
+                log_once!(
+                    "Warning: Guest error reporting is ignored for glGetError(), returning 0."
+                );
+                return 0;
+            }
             log!("Warning: glGetError() returned {:#x}", err);
         }
         err
@@ -157,6 +205,20 @@ fn glGetIntegerv(env: &mut Environment, pname: GLenum, params: MutPtr<GLint>) {
                 for (idx, &format) in SUPPORTED_COMPRESSED_TEXTURE_FORMATS.iter().enumerate() {
                     mem.write(params + idx as GuestUSize, format as _);
                 }
+            }
+            // MAX_COLOR_ATTACHMENTS_EXT or MAX_COLOR_ATTACHMENTS_OES
+            0x8cdf => {
+                // According to [OES_framebuffer_object](https://registry.khronos.org/OpenGL/extensions/OES/OES_framebuffer_object.txt),
+                // MAX_COLOR_ATTACHMENTS_OES is not supported in the extension,
+                // but we return 1 to match the real device.
+                mem.write(params, 1 as _);
+            }
+            // MAX_SAMPLES or MAX_SAMPLES_ANGLE
+            0x8d57 => {
+                // TODO: handle GetBooleanv and GetFloatv as well
+                // 1 is an initial value
+                // TODO: This is an OpenGL ES 2.0 extension, not supported yet
+                mem.write(params, 1 as _);
             }
             _ => {
                 let params = mem.ptr_at_mut(params, 16 /* upper bound */);
@@ -300,6 +362,16 @@ fn glPolygonOffsetx(env: &mut Environment, factor: GLfixed, units: GLfixed) {
         gles.PolygonOffsetx(factor, units)
     })
 }
+fn glSampleCoverage(env: &mut Environment, value: GLclampf, invert: GLboolean) {
+    with_ctx_and_mem(env, |gles, _mem| unsafe {
+        gles.SampleCoverage(value, invert)
+    })
+}
+fn glSampleCoveragex(env: &mut Environment, value: GLclampx, invert: GLboolean) {
+    with_ctx_and_mem(env, |gles, _mem| unsafe {
+        gles.SampleCoveragex(value, invert)
+    })
+}
 fn glShadeModel(env: &mut Environment, mode: GLenum) {
     with_ctx_and_mem(env, |gles, _mem| unsafe { gles.ShadeModel(mode) })
 }
@@ -341,6 +413,9 @@ fn glStencilOp(env: &mut Environment, sfail: GLenum, dpfail: GLenum, dppass: GLe
 }
 fn glStencilMask(env: &mut Environment, mask: GLuint) {
     with_ctx_and_mem(env, |gles, _mem| unsafe { gles.StencilMask(mask) });
+}
+fn glLogicOp(env: &mut Environment, opcode: GLenum) {
+    with_ctx_and_mem(env, |gles, _mem| unsafe { gles.LogicOp(opcode) });
 }
 // Points
 fn glPointSize(env: &mut Environment, size: GLfloat) {
@@ -454,7 +529,10 @@ fn glMaterialxv(env: &mut Environment, face: GLenum, pname: GLenum, params: Cons
     })
 }
 
-// Textures
+// Buffers
+fn glIsBuffer(env: &mut Environment, buffer: GLuint) -> GLboolean {
+    with_ctx_and_mem(env, |gles, _mem| unsafe { gles.IsBuffer(buffer) })
+}
 fn glGenBuffers(env: &mut Environment, n: GLsizei, buffers: MutPtr<GLuint>) {
     with_ctx_and_mem(env, |gles, mem| {
         let n_usize: GuestUSize = n.try_into().unwrap();
@@ -833,6 +911,25 @@ fn glTranslatex(env: &mut Environment, x: GLfixed, y: GLfixed, z: GLfixed) {
 fn glPixelStorei(env: &mut Environment, pname: GLenum, param: GLint) {
     with_ctx_and_mem(env, |gles, _mem| unsafe { gles.PixelStorei(pname, param) })
 }
+fn glReadPixels(
+    env: &mut Environment,
+    x: GLint,
+    y: GLint,
+    width: GLsizei,
+    height: GLsizei,
+    format: GLenum,
+    type_: GLenum,
+    pixels: MutVoidPtr,
+) {
+    with_ctx_and_mem(env, |gles, mem| {
+        let pixels = {
+            let pixel_count: GuestUSize = width.checked_mul(height).unwrap().try_into().unwrap();
+            let size = image_size_estimate(pixel_count, format, type_);
+            mem.ptr_at_mut(pixels.cast::<u8>(), size).cast::<GLvoid>()
+        };
+        unsafe { gles.ReadPixels(x, y, width, height, format, type_, pixels) }
+    })
+}
 fn glGenTextures(env: &mut Environment, n: GLsizei, textures: MutPtr<GLuint>) {
     with_ctx_and_mem(env, |gles, mem| {
         let n_usize: GuestUSize = n.try_into().unwrap();
@@ -934,12 +1031,12 @@ fn image_size_estimate(pixel_count: GuestUSize, format: GLenum, type_: GLenum) -
             gles11::RGB => 3,
             gles11::RGBA => 4,
             gles11::BGRA_EXT => 4,
-            _ => panic!("Unexpected format {:#x}", format),
+            _ => panic!("Unexpected format {format:#x}"),
         },
         gles11::UNSIGNED_SHORT_5_6_5
         | gles11::UNSIGNED_SHORT_4_4_4_4
         | gles11::UNSIGNED_SHORT_5_5_5_1 => 2,
-        _ => panic!("Unexpected type {:#x}", type_),
+        _ => panic!("Unexpected type {type_:#x}"),
     };
     // This is approximate, it doesn't account for alignment.
     pixel_count.checked_mul(bytes_per_pixel).unwrap()
@@ -1071,8 +1168,11 @@ fn glTexEnvi(env: &mut Environment, target: GLenum, pname: GLenum, param: GLint)
     })
 }
 fn glTexEnvfv(env: &mut Environment, target: GLenum, pname: GLenum, params: ConstPtr<GLfloat>) {
+    assert!(
+        target == gles11::TEXTURE_ENV || target == gles11::TEXTURE_FILTER_CONTROL_EXT,
+        "target {target:#x}, pname {pname:#x}"
+    );
     // TODO: GL_POINT_SPRITE_OES
-    assert!(target == gles11::TEXTURE_ENV);
     with_ctx_and_mem(env, |gles, mem| {
         let params = mem.ptr_at(params, 4 /* upper bound */);
         unsafe { gles.TexEnvfv(target, pname, params) }
@@ -1095,6 +1195,31 @@ fn glTexEnviv(env: &mut Environment, target: GLenum, pname: GLenum, params: Cons
     })
 }
 
+fn glMultiTexCoord4f(
+    env: &mut Environment,
+    target: GLenum,
+    s: GLfloat,
+    t: GLfloat,
+    r: GLfloat,
+    q: GLfloat,
+) {
+    with_ctx_and_mem(env, |gles, _mem| unsafe {
+        gles.MultiTexCoord4f(target, s, t, r, q)
+    })
+}
+fn glMultiTexCoord4x(
+    env: &mut Environment,
+    target: GLenum,
+    s: GLfixed,
+    t: GLfixed,
+    r: GLfixed,
+    q: GLfixed,
+) {
+    with_ctx_and_mem(env, |gles, _mem| unsafe {
+        gles.MultiTexCoord4x(target, s, t, r, q)
+    })
+}
+
 // OES_framebuffer_object
 fn glGenFramebuffersOES(env: &mut Environment, n: GLsizei, framebuffers: MutPtr<GLuint>) {
     with_ctx_and_mem(env, |gles, mem| {
@@ -1108,6 +1233,16 @@ fn glGenRenderbuffersOES(env: &mut Environment, n: GLsizei, renderbuffers: MutPt
         let n_usize: GuestUSize = n.try_into().unwrap();
         let renderbuffers = mem.ptr_at_mut(renderbuffers, n_usize);
         unsafe { gles.GenRenderbuffersOES(n, renderbuffers) }
+    })
+}
+fn glIsFramebufferOES(env: &mut Environment, framebuffer: GLuint) -> GLboolean {
+    with_ctx_and_mem(env, |gles, _mem| unsafe {
+        gles.IsFramebufferOES(framebuffer)
+    })
+}
+fn glIsRenderbufferOES(env: &mut Environment, renderbuffer: GLuint) -> GLboolean {
+    with_ctx_and_mem(env, |gles, _mem| unsafe {
+        gles.IsRenderbufferOES(renderbuffer)
     })
 }
 fn glBindFramebufferOES(env: &mut Environment, target: GLenum, framebuffer: GLuint) {
@@ -1235,7 +1370,7 @@ fn glMapBufferOES(env: &mut Environment, target: GLenum, access: GLenum) -> MutP
     assert!(matches!(target, ARRAY_BUFFER | ELEMENT_ARRAY_BUFFER));
     assert!(access == WRITE_ONLY_OES);
     let buffer_object_name = _get_currently_bound_buffer_object_name(env, target);
-    let host_buffer = with_ctx_and_mem(env, |gles, _mem| unsafe {
+    let host_buffer = with_ctx_and_mem_no_skip(env, |gles, _mem| unsafe {
         gles.MapBufferOES(target, access)
     });
     if host_buffer.is_null() {
@@ -1367,6 +1502,8 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(glFrontFace(_)),
     export_c_func!(glPolygonOffset(_, _)),
     export_c_func!(glPolygonOffsetx(_, _)),
+    export_c_func!(glSampleCoverage(_, _)),
+    export_c_func!(glSampleCoveragex(_, _)),
     export_c_func!(glShadeModel(_)),
     export_c_func!(glScissor(_, _, _, _)),
     export_c_func!(glViewport(_, _, _, _)),
@@ -1375,6 +1512,7 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(glStencilFunc(_, _, _)),
     export_c_func!(glStencilOp(_, _, _)),
     export_c_func!(glStencilMask(_)),
+    export_c_func!(glLogicOp(_)),
     // Points
     export_c_func!(glPointSize(_)),
     export_c_func!(glPointSizex(_)),
@@ -1400,6 +1538,7 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(glMaterialfv(_, _, _)),
     export_c_func!(glMaterialxv(_, _, _)),
     // Buffers
+    export_c_func!(glIsBuffer(_)),
     export_c_func!(glGenBuffers(_, _)),
     export_c_func!(glDeleteBuffers(_, _)),
     export_c_func!(glBindBuffer(_, _)),
@@ -1447,6 +1586,7 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(glTranslatex(_, _, _)),
     // Textures
     export_c_func!(glPixelStorei(_, _)),
+    export_c_func!(glReadPixels(_, _, _, _, _, _, _)),
     export_c_func!(glGenTextures(_, _)),
     export_c_func!(glDeleteTextures(_, _)),
     export_c_func!(glActiveTexture(_)),
@@ -1469,9 +1609,13 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(glTexEnvfv(_, _, _)),
     export_c_func!(glTexEnvxv(_, _, _)),
     export_c_func!(glTexEnviv(_, _, _)),
+    export_c_func!(glMultiTexCoord4f(_, _, _, _, _)),
+    export_c_func!(glMultiTexCoord4x(_, _, _, _, _)),
     // OES_framebuffer_object
     export_c_func!(glGenFramebuffersOES(_, _)),
     export_c_func!(glGenRenderbuffersOES(_, _)),
+    export_c_func!(glIsFramebufferOES(_)),
+    export_c_func!(glIsRenderbufferOES(_)),
     export_c_func!(glBindFramebufferOES(_, _)),
     export_c_func!(glBindRenderbufferOES(_, _)),
     export_c_func!(glRenderbufferStorageOES(_, _, _, _)),

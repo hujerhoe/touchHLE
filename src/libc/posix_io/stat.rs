@@ -8,11 +8,10 @@
 use super::{close, off_t, open_direct, FileDescriptor};
 use crate::dyld::{export_c_func, FunctionExports};
 use crate::fs::{FsError, GuestFile, GuestPath};
-use crate::libc::errno::{set_errno, EEXIST};
+use crate::libc::errno::{set_errno, EACCES, EBADF, EEXIST, ENOENT};
 use crate::libc::time::timespec;
 use crate::mem::{ConstPtr, MutPtr, SafeRead};
 use crate::Environment;
-use std::io::{Seek, SeekFrom};
 
 #[allow(non_camel_case_types)]
 pub type dev_t = u32;
@@ -80,9 +79,9 @@ fn mkdir(env: &mut Environment, path: ConstPtr<u8>, mode: mode_t) -> i32 {
                 err
             );
             match err {
-                FsError::AlreadyExist => {
-                    set_errno(env, EEXIST);
-                }
+                FsError::AlreadyExist => set_errno(env, EEXIST),
+                FsError::NonexistentParentDir => set_errno(env, ENOENT),
+                FsError::ReadonlyParentDir => set_errno(env, EACCES),
                 _ => unimplemented!(),
             }
             -1
@@ -92,8 +91,10 @@ fn mkdir(env: &mut Environment, path: ConstPtr<u8>, mode: mode_t) -> i32 {
 
 /// Helper for [stat()] and [fstat()] that fills the data in the stat struct
 fn fstat_inner(env: &mut Environment, fd: FileDescriptor, buf: MutPtr<stat>) -> i32 {
-    // TODO: error handling for unknown fd?
-    let file = env.libc_state.posix_io.file_for_fd(fd).unwrap();
+    let Some(file) = env.libc_state.posix_io.file_for_fd(fd) else {
+        set_errno(env, EBADF);
+        return -1;
+    };
 
     // FIXME: This implementation is highly incomplete. fstat() returns a huge
     // struct with many kinds of data in it. This code is assuming the caller
@@ -105,22 +106,17 @@ fn fstat_inner(env: &mut Environment, fd: FileDescriptor, buf: MutPtr<stat>) -> 
         GuestFile::File(_) | GuestFile::IpaBundleFile(_) | GuestFile::ResourceFile(_) => {
             stat.st_mode |= S_IFREG;
 
+            // TODO: use `std::fs::metadata()` instead
+
             // Obtain file size
-            // TODO: Use the stream_len() method if that ever gets stabilized.
-            let old_pos = file.file.stream_position().unwrap();
-            stat.st_size = file
-                .file
-                .seek(SeekFrom::End(0))
-                .unwrap()
-                .try_into()
-                .unwrap();
-            file.file.seek(SeekFrom::Start(old_pos)).unwrap();
+            stat.st_size = file.file.stream_len().unwrap().try_into().unwrap();
         }
         GuestFile::Directory => {
             stat.st_mode |= S_IFDIR;
 
             // TODO: st_size
         }
+        _ => unimplemented!(),
     }
 
     env.mem.write(buf, stat);
@@ -132,7 +128,7 @@ fn fstat(env: &mut Environment, fd: FileDescriptor, buf: MutPtr<stat>) -> i32 {
     // TODO: handle errno properly
     set_errno(env, 0);
 
-    log!("Warning: fstat() call, this function is mostly unimplemented");
+    log_once!("Warning: fstat() call, this function is mostly unimplemented");
     let result = fstat_inner(env, fd, buf);
     log_dbg!("fstat({:?}, {:?}) -> {}", fd, buf, result);
     result
@@ -142,7 +138,7 @@ fn stat(env: &mut Environment, path: ConstPtr<u8>, buf: MutPtr<stat>) -> i32 {
     // TODO: handle errno properly
     set_errno(env, 0);
 
-    log!("Warning: stat() call, this function is mostly unimplemented");
+    log_once!("Warning: stat() call, this function is mostly unimplemented");
 
     fn do_stat(env: &mut Environment, path: ConstPtr<u8>, buf: MutPtr<stat>) -> i32 {
         if path.is_null() {
@@ -171,8 +167,14 @@ fn stat(env: &mut Environment, path: ConstPtr<u8>, buf: MutPtr<stat>) -> i32 {
     result
 }
 
+fn lstat(env: &mut Environment, path: ConstPtr<u8>, buf: MutPtr<stat>) -> i32 {
+    log_once!("Warning: lstat() is implemented as stat() (symbolic links are unsupported for now)");
+    stat(env, path, buf)
+}
+
 pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(mkdir(_, _)),
     export_c_func!(fstat(_, _)),
     export_c_func!(stat(_, _)),
+    export_c_func!(lstat(_, _)),
 ];

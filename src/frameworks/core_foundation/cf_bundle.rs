@@ -9,6 +9,7 @@
 //! but here it is the same type.
 
 use super::cf_array::CFArrayRef;
+use super::cf_dictionary::CFDictionaryRef;
 use super::cf_string::CFStringRef;
 use super::cf_url::CFURLRef;
 use super::CFTypeRef;
@@ -19,16 +20,27 @@ use crate::objc::{id, msg, msg_class, retain};
 use crate::Environment;
 
 const kCFBundleVersionKey: &str = "CFBundleVersion";
+const kCFBundleExecutableKey: &str = "CFBundleExecutable";
 
-pub const CONSTANTS: ConstantExports = &[(
-    "_kCFBundleVersionKey",
-    HostConstant::NSString(kCFBundleVersionKey),
-)];
+pub const CONSTANTS: ConstantExports = &[
+    (
+        "_kCFBundleVersionKey",
+        HostConstant::NSString(kCFBundleVersionKey),
+    ),
+    (
+        "_kCFBundleExecutableKey",
+        HostConstant::NSString(kCFBundleExecutableKey),
+    ),
+];
 
 pub type CFBundleRef = CFTypeRef;
 
 fn CFBundleGetMainBundle(env: &mut Environment) -> CFBundleRef {
     msg_class![env; NSBundle mainBundle]
+}
+
+fn CFBundleGetInfoDictionary(env: &mut Environment, bundle: CFBundleRef) -> CFDictionaryRef {
+    msg![env; bundle infoDictionary]
 }
 
 fn CFBundleGetValueForInfoDictionaryKey(
@@ -69,6 +81,11 @@ fn CFBundleGetVersionNumber(env: &mut Environment, bundle: CFBundleRef) -> u32 {
 
 fn CFBundleCopyBundleURL(env: &mut Environment, bundle: CFBundleRef) -> CFURLRef {
     let url: CFURLRef = msg![env; bundle bundleURL];
+    msg![env; url copy]
+}
+
+fn CFBundleCopyExecutableURL(env: &mut Environment, bundle: CFBundleRef) -> CFURLRef {
+    let url: id = msg![env; bundle executableURL];
     msg![env; url copy]
 }
 
@@ -140,10 +157,16 @@ pub fn CFBundleCopyPreferredLocalizationsFromArray(
         }
     }
 
-    // Add the first element as fallback
-    let first_loc: id = msg![env; loc_array objectAtIndex: (0 as NSUInteger)];
-    result.push(first_loc);
-    retain(env, first_loc);
+    if loc_count > 0 {
+        // Add the first element as fallback
+        let first_loc: id = msg![env; loc_array objectAtIndex:(0 as NSUInteger)];
+        result.push(first_loc);
+        retain(env, first_loc);
+    } else {
+        // Behaviour was verified on macOS
+        let en_loc = ns_string::get_static_str(env, "en");
+        result.push(en_loc);
+    };
 
     let result = ns_array::from_vec(env, result);
     log_dbg!(
@@ -154,13 +177,27 @@ pub fn CFBundleCopyPreferredLocalizationsFromArray(
     result
 }
 
+fn CFBundleCopyLocalizedString(
+    env: &mut Environment,
+    bundle: CFBundleRef,
+    key: CFStringRef,
+    value: CFStringRef,
+    table_name: CFStringRef,
+) -> CFStringRef {
+    let res = msg![env; bundle localizedStringForKey:key value:value table:table_name];
+    msg![env; res copy]
+}
+
 pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(CFBundleGetMainBundle()),
+    export_c_func!(CFBundleGetInfoDictionary(_)),
     export_c_func!(CFBundleGetValueForInfoDictionaryKey(_, _)),
     export_c_func!(CFBundleGetVersionNumber(_)),
     export_c_func!(CFBundleCopyBundleURL(_)),
+    export_c_func!(CFBundleCopyExecutableURL(_)),
     export_c_func!(CFBundleCopyResourcesDirectoryURL(_)),
     export_c_func!(CFBundleCopyResourceURL(_, _, _, _)),
     export_c_func!(CFBundleCopyBundleLocalizations(_)),
     export_c_func!(CFBundleCopyPreferredLocalizationsFromArray(_)),
+    export_c_func!(CFBundleCopyLocalizedString(_, _, _, _)),
 ];

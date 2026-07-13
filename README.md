@@ -10,9 +10,7 @@ The goal of this project is to run games from the early days of iOS:
 * Longer term: iPhone OS 3.1, iPad apps (iPhone OS 3.2), iOS 4.x, …
 * [Never](https://github.com/touchHLE/touchHLE/issues/181#issuecomment-1777098259): 64-bit iOS.
 
-Support for apps that aren't games isn't a priority: it's more complex and less fun.
-
-The [touchHLE app compatibility database](https://appdb.touchhle.org/) tracks which apps work in touchHLE. It is a crowdsourced effort to which anyone can contribute.
+**This does not mean that all apps for these OS versions work.** The vast majority of iPhone OS 2.x and iPhone OS 3.x apps do not currently work in touchHLE, and the ones that do work are generally games (support for other apps isn't a priority: it's more complex and less fun). This improves gradually over time with contributions from various developers. The [touchHLE app compatibility database](https://appdb.touchhle.org/) tracks which apps work in touchHLE; it is a crowdsourced effort to which anyone can contribute. **We don't take requests, so please do not ask us to support your favourite game.**
 
 If you're curious about the history and motivation behind the project, you might want to read [the original announcement](https://hikari.noyu.me/blog/2023-02-06-touchhle-anouncement-thread-tech-games-me-and-passion-projects.html). For an introduction to some of the technical details, check out [_touchHLE in depth_](https://hikari.noyu.me/blog/2023-04-13-touchhle-in-depth-1-function-calls.html).
 
@@ -36,8 +34,8 @@ Input methods:
 
 - For simulated touch input, there are four options:
   - Mouse/trackpad input (tap/hold/drag by pressing the left mouse button)
-  - Virtual cursor using a game controller (move the cursor with the right analog stick , and tap/hold/drag by pressing the stick or the right shoulder button)
-  - Mapping of game controller buttons (see the description of `--button-to-touch=` in `OPTIONS_HELP.txt`)
+  - Virtual cursor using a game controller (move the cursor with the right analog stick, and tap/hold/drag by pressing the stick or the right shoulder button)
+  - Mapping of game controller buttons or the left analog stick to specific on-screen locations (see the descriptions of `--button-to-touch=`, `--dpad-to-touch=` and `--stick-to-touch=` in `OPTIONS_HELP.txt`)
   - Real touch input, if you're on a device that has a touch screen
 - For simulated accelerometer input, there are three options:
   - Tilt control simulation using the left analog stick of a game controller
@@ -89,6 +87,25 @@ If you're a Windows user and unfamiliar with the command line, these instruction
 3. Click “Open with PowerShell”.
 4. Type `.\touchHLE.exe "YourAppNameHere.ipa"` (or `.app` as appropriate) and press Enter. If you want to specify options, add a space after the app name (outside the quotes) and then type the options, separated by spaces.
 
+## Local multiplayer support
+
+touchHLE provides limited support for local multiplayer via Wi-Fi in some games. At the moment of writing it is supported in Asphalt 4 and N.O.V.A.
+
+Real iOS devices could also join/host games!
+
+**Usage:**
+1. Install touchHLE on 2+ devices connected to the same Wi-Fi network.
+2. **Important:** Ensure touchHLE is whitelisted in your OS firewall/network settings.
+3. Enable "Network access" in Quick options or via `--allow-network-access`.
+4. Start/join multiplayer in the game.
+
+**FAQs:**
+* **Tunneling over Internet/VPN:** Not officially supported, but might work.
+* **Bluetooth:** Not supported.
+
+**Known issues:**
+* On macOS you may need to launch touchHLE from terminal as otherwise OS will block network connections.
+
 ## Other stuff
 
 Any data saved by the app (e.g. **saved games**) are stored in the `touchHLE_sandbox` folder.
@@ -101,7 +118,7 @@ See the `CONTRIBUTING.md` file in the git repo if you want to contribute. If you
 
 # License
 
-touchHLE © 2023–2024 touchHLE project contributors.
+touchHLE © 2023–2026 touchHLE project contributors.
 
 The source code of touchHLE itself (not its dependencies) is licensed under the Mozilla Public License, version 2.0.
 
@@ -116,7 +133,7 @@ Please note that different licensing terms apply to the bundled dynamic librarie
 We stand on the shoulders of giants. Thank you to:
 
 * Everyone who has contributed to the project or supported any of its contributors financially.
-* The authors of and contributors to the many libraries used by this project: [dynarmic](https://github.com/merryhime/dynarmic), [rust-macho](https://github.com/flier/rust-macho), [SDL](https://libsdl.org/), [rust-sdl2](https://github.com/Rust-SDL2/rust-sdl2), [stb\_image](https://github.com/nothings/stb), Imagination Technologies' [PVRTC decompressor](https://github.com/powervr-graphics/Native_SDK/blob/master/framework/PVRCore/texture/PVRTDecompress.cpp), [openal-soft](https://github.com/kcat/openal-soft), [hound](https://github.com/ruuda/hound), [caf](https://github.com/rustaudio/caf), [Symphonia](https://github.com/pdeljanov/Symphonia), [RustType](https://gitlab.redox-os.org/redox-os/rusttype), [the Liberation fonts](https://github.com/liberationfonts/liberation-fonts), [the Noto CJK fonts](https://github.com/googlefonts/noto-cjk), [rust-plist](https://github.com/ebarnard/rust-plist), [quick-xml](https://github.com/tafia/quick-xml), [gl-rs](https://github.com/brendanzab/gl-rs), [cargo-license](https://github.com/onur/cargo-license), [cc-rs](https://github.com/rust-lang/cc-rs), [cmake-rs](https://github.com/rust-lang/cmake-rs), [cargo-ndk](https://github.com/bbqsrc/cargo-ndk), [cargo-ndk-android-gradle](https://github.com/willir/cargo-ndk-android-gradle), [md5](https://github.com/stainless-steel/md5), [yore](https://github.com/bonega/yore), and the Rust standard library.
+* The authors of and contributors to the many libraries used by this project: [dynarmic](https://github.com/merryhime/dynarmic), [rust-macho](https://github.com/flier/rust-macho), [SDL](https://libsdl.org/), [rust-sdl2](https://github.com/Rust-SDL2/rust-sdl2), [stb\_image](https://github.com/nothings/stb), Imagination Technologies' [PVRTC decompressor](https://github.com/powervr-graphics/Native_SDK/blob/master/framework/PVRCore/texture/PVRTDecompress.cpp), [openal-soft](https://github.com/kcat/openal-soft), [hound](https://github.com/ruuda/hound), [Symphonia](https://github.com/pdeljanov/Symphonia), [RustType](https://gitlab.redox-os.org/redox-os/rusttype), [the Liberation fonts](https://github.com/liberationfonts/liberation-fonts), [the Noto CJK fonts](https://github.com/googlefonts/noto-cjk), [rust-plist](https://github.com/ebarnard/rust-plist), [nibarchive](https://github.com/michaelwright235/nibarchive), [quick-xml](https://github.com/tafia/quick-xml), [gl-rs](https://github.com/brendanzab/gl-rs), [cargo-license](https://github.com/onur/cargo-license), [cc-rs](https://github.com/rust-lang/cc-rs), [cmake-rs](https://github.com/rust-lang/cmake-rs), [cargo-ndk](https://github.com/bbqsrc/cargo-ndk), [cargo-ndk-android-gradle](https://github.com/willir/cargo-ndk-android-gradle), [md-5 and sha1](https://github.com/RustCrypto/hashes), [encoding_rs](https://github.com/hsivonen/encoding_rs), [corosensei](https://github.com/Amanieu/corosensei), [uuid](https://github.com/uuid-rs/uuid) and the Rust standard library.
 * The Skyline emulator project (RIP), for [writing the tedious boilerplate needed to replace file management on newer Android versions](https://github.com/skyline-emu/skyline/blob/dc20a615275f66bee20a4fd851ef0231daca4f14/app/src/main/java/emu/skyline/provider/DocumentsProvider.kt).
 * The [Rust project](https://www.rust-lang.org/) generally.
 * The various people out there who've documented the iPhone OS platform, officially or otherwise. Much of this documentation is linked to within this codebase!

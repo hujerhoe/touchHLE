@@ -9,15 +9,24 @@ use super::ns_array::ArrayHostObject;
 use super::ns_property_list_serialization::{
     deserialize_plist_from_file, NSPropertyListBinaryFormat_v1_0,
 };
-use super::ns_string::{from_rust_string, to_rust_string};
-use super::{ns_string, ns_url, NSUInteger};
+use super::ns_string::{from_rust_string, get_static_str, to_rust_string};
+use super::{_nib_archive_decoder, ns_array, ns_keyed_unarchiver, ns_string, ns_url, NSUInteger};
 use crate::abi::{CallFromHost, GuestFunction, VaList};
 use crate::frameworks::core_foundation::{CFHashCode, CFIndex};
+use crate::frameworks::foundation::ns_enumerator::{
+    fast_enumeration_helper, NSFastEnumerationState,
+};
+use crate::frameworks::foundation::ns_file_manager::{
+    NSFileModificationDate, NSFileSize, NSFileType,
+};
+use crate::frameworks::foundation::ns_keyed_archiver::{
+    encode_object, get_value_to_encode_for_current_key,
+};
 use crate::fs::GuestPath;
 use crate::mem::{ConstPtr, MutPtr, Ptr, SafeRead};
 use crate::objc::{
-    autorelease, id, msg, msg_class, nil, objc_classes, release, retain, ClassExports, HostObject,
-    NSZonePtr,
+    autorelease, id, msg, msg_class, nil, objc_classes, release, retain, Class, ClassExports,
+    HostObject, NSZonePtr,
 };
 use crate::{impl_HostObject_with_superclass, Environment};
 use std::collections::hash_map::Entry;
@@ -46,7 +55,7 @@ impl DictionaryHostObject {
             return nil;
         };
         for &(candidate_key, value) in collisions {
-            if candidate_key == key || msg![env; candidate_key isEqualTo:key] {
+            if candidate_key == key || msg![env; candidate_key isEqual:key] {
                 return value;
             }
         }
@@ -68,7 +77,7 @@ impl DictionaryHostObject {
             return;
         };
         for &mut (candidate_key, ref mut existing_value) in collisions.iter_mut() {
-            if candidate_key == key || msg![env; candidate_key isEqualTo:key] {
+            if candidate_key == key || msg![env; candidate_key isEqual:key] {
                 release(env, *existing_value);
                 *existing_value = value;
                 return;
@@ -76,6 +85,22 @@ impl DictionaryHostObject {
         }
         collisions.push((key, value));
         self.count += 1;
+    }
+    pub(super) fn remove(&mut self, env: &mut Environment, key: id) {
+        let hash: Hash = msg![env; key hash];
+        let Some(collisions) = self.map.get_mut(&hash) else {
+            return;
+        };
+        let Some(idx) = collisions.iter().position(|&(candidate_key, _)| {
+            candidate_key == key || msg![env; candidate_key isEqual:key]
+        }) else {
+            return;
+        };
+        let (existing_key, value) = collisions[idx];
+        release(env, existing_key);
+        release(env, value);
+        collisions.remove(idx);
+        self.count -= 1;
     }
     pub(super) fn release(&mut self, env: &mut Environment) {
         for collisions in self.map.values() {
@@ -286,6 +311,63 @@ pub fn init_with_objects_and_keys(
     this
 }
 
+/// Helper function to share `initWithDictionary:` implementations
+fn init_with_dictionary_common(env: &mut Environment, this: id, other_dict: id) -> id {
+    let other_host_object: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(other_dict));
+
+    let mut host_object = <DictionaryHostObject as Default>::default();
+
+    for key in other_host_object.iter_keys() {
+        let object = other_host_object.lookup(env, key);
+        host_object.insert(env, key, object, /* copy_key: */ true);
+    }
+
+    *env.objc.borrow_mut(this) = host_object;
+    *env.objc.borrow_mut(other_dict) = other_host_object;
+    this
+}
+
+/// Helper function so share `initWithObjects:ForKeys:` implementations
+fn init_with_objects_for_keys_common(env: &mut Environment, this: id, objects: id, keys: id) -> id {
+    let keys_size: NSUInteger = msg![env; keys count];
+    let objects_size: NSUInteger = msg![env; objects count];
+    assert_eq!(keys_size, objects_size); // TODO: raise proper exception
+
+    let mut host_object = <DictionaryHostObject as Default>::default();
+
+    let objects_enumerator: id = msg![env; objects objectEnumerator];
+    let keys_enumerator: id = msg![env; keys objectEnumerator];
+
+    loop {
+        let next_key: id = msg![env; keys_enumerator nextObject];
+        let next_object: id = msg![env; objects_enumerator nextObject];
+        if next_key == nil {
+            assert_eq!(next_object, nil);
+            break;
+        }
+        host_object.insert(env, next_key, next_object, /* copy_key: */ true);
+    }
+    *env.objc.borrow_mut(this) = host_object;
+    this
+}
+
+/// Helper function to share `allKeys` implementations
+fn all_keys_common(env: &mut Environment, this: id) -> id {
+    let host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(this));
+    let keys: Vec<id> = host_obj
+        .map
+        .values()
+        .flatten()
+        .map(|&(key, _value)| key)
+        .collect();
+    *env.objc.borrow_mut(this) = host_obj;
+    for &key in &keys {
+        retain(env, key);
+    }
+    let res = ns_array::from_vec(env, keys);
+    autorelease(env, res)
+}
+
 pub const CLASSES: ClassExports = objc_classes! {
 
 (env, this, _cmd);
@@ -327,18 +409,27 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 // These probably comes from some category related to plists.
 + (id)dictionaryWithContentsOfFile:(id)path { // NSString*
-    let path = ns_string::to_rust_string(env, path);
-    let res = deserialize_plist_from_file(
-        env,
-        GuestPath::new(&path),
-        /* array_expected: */ false,
-    );
-    autorelease(env, res)
+    let new_dict: id = msg![env; this alloc];
+    let new_dict: id = msg![env; new_dict initWithContentsOfFile:path];
+    autorelease(env, new_dict)
 }
 + (id)dictionaryWithContentsOfURL:(id)url { // NSURL*
-    let path = ns_url::to_rust_path(env, url);
-    let res = deserialize_plist_from_file(env, &path, /* array_expected: */ false);
-    autorelease(env, res)
+    let new_dict: id = msg![env; this alloc];
+    let new_dict: id = msg![env; new_dict initWithContentsOfURL:url];
+    autorelease(env, new_dict)
+}
+
++ (id)dictionaryWithObjects:(id)objects //NSArray *
+                    forKeys:(id)keys { //NSArray *
+    let new_dict: id = msg![env; this alloc];
+    let new_dict: id = msg![env; new_dict initWithObjects:objects forKeys:keys];
+    autorelease(env, new_dict)
+}
+
++ (id)dictionaryWithDictionary:(id)dict { // NSDictionary*
+    let new_dict: id = msg![env; this alloc];
+    let new_dict: id = msg![env; new_dict initWithDictionary:dict];
+    autorelease(env, new_dict)
 }
 
 - (id)init {
@@ -388,6 +479,65 @@ pub const CLASSES: ClassExports = objc_classes! {
     msg![env; this objectForKey:key]
 }
 
+- (NSUInteger)hash {
+    // TODO: define better hash
+    msg![env; this count]
+}
+- (bool)isEqual:(id)other {
+    if this == other {
+        return true;
+    }
+    let class: Class = msg_class![env; NSDictionary class];
+    if !msg![env; other isKindOfClass:class] {
+        return false;
+    }
+    msg![env; this isEqualToDictionary:other]
+}
+- (bool)isEqualToDictionary:(id)other { // NSDictionary *
+    if other == nil {
+        return false;
+    }
+    let count: NSUInteger = msg![env; this count];
+    let other_count: NSUInteger = msg![env; other count];
+    if count != other_count {
+        return false;
+    }
+    let keys_arr = msg![env; this allKeys];
+    let keys_count: NSUInteger = msg![env; keys_arr count];
+    for i in 0..keys_count {
+        let key: id = msg![env; keys_arr objectAtIndex:i];
+        let value: id = msg![env; this objectForKey:key];
+        let other_value: id = msg![env; other objectForKey:key];
+        let equal: bool = msg![env; value isEqual:other_value];
+        if !equal {
+            return false;
+        }
+    }
+    true
+}
+
+// NSDictionary(NSFileAttributes) category
+// TODO: implement categories properly
+- (id)fileModificationDate {
+    let modif_date_key = get_static_str(env, NSFileModificationDate);
+    msg![env; this objectForKey:modif_date_key]
+}
+- (u64)fileSize {
+    let size_key = get_static_str(env, NSFileSize);
+    let num = msg![env; this objectForKey:size_key];
+    if num != nil {
+        msg![env; num unsignedLongLongValue]
+    } else {
+        // GnuStep docs claiming to return NSNotFound here [ref](https://www.gnustep.org/resources/documentation/Developer/Base/Reference/NSFileManager.html#method$NSDictionary(NSFileAttributes)-fileSize)
+        // But as seen on iPhone Simulator, it's returning 0 with an empty dict
+        0
+    }
+}
+- (id)fileType {
+    let file_type_key = get_static_str(env, NSFileType);
+    msg![env; this objectForKey:file_type_key]
+}
+
 @end
 
 // NSMutableDictionary is an abstract class. A subclass must provide everything
@@ -409,6 +559,38 @@ pub const CLASSES: ClassExports = objc_classes! {
     let new: id = msg![env; this alloc];
     let new: id = msg![env; new initWithCapacity:capacity];
     autorelease(env, new)
+}
+
+// These probably comes from some category related to plists.
+- (id)initWithContentsOfFile:(id)path { // NSString*
+    release(env, this);
+    let path = ns_string::to_rust_string(env, path);
+    let tmp = deserialize_plist_from_file(
+        env,
+        GuestPath::new(&path),
+        /* array_expected: */ false
+    );
+    if tmp == nil {
+        return nil;
+    }
+    // We should respect mutability of the top most container!
+    let res = msg_class![env; NSMutableDictionary alloc];
+    let res = msg![env; res initWithDictionary:tmp];
+    release(env, tmp);
+    res
+}
+- (id)initWithContentsOfURL:(id)url { // NSURL*
+    release(env, this);
+    let path = ns_url::to_rust_path(env, url);
+    let tmp = deserialize_plist_from_file(env, &path, /* array_expected: */ false);
+    if tmp == nil {
+        return nil;
+    }
+    // We should respect mutability of the top most container!
+    let res = msg_class![env; NSMutableDictionary alloc];
+    let res = msg![env; res initWithDictionary:tmp];
+    release(env, tmp);
+    res
 }
 
 @end
@@ -437,6 +619,15 @@ pub const CLASSES: ClassExports = objc_classes! {
     this
 }
 
+- (id)initWithDictionary:(id)dictionary {
+    init_with_dictionary_common(env, this, dictionary)
+}
+
+- (id)initWithObjects:(id)objects //NSArray *
+              forKeys:(id)keys { //NSArray *
+    init_with_objects_for_keys_common(env, this, objects, keys)
+}
+
 // TODO: enumeration, more init methods, etc
 
 - (NSUInteger)count {
@@ -447,6 +638,27 @@ pub const CLASSES: ClassExports = objc_classes! {
     let res = host_obj.lookup(env, key);
     *env.objc.borrow_mut(this) = host_obj;
     res
+}
+
+- (id)allKeys {
+    all_keys_common(env, this)
+}
+
+// NSFastEnumeration implementation
+- (NSUInteger)countByEnumeratingWithState:(MutPtr<NSFastEnumerationState>)state
+                                  objects:(MutPtr<id>)stackbuf
+                                    count:(NSUInteger)len {
+    // We assume that order in which objects are reported is consistent
+    // between calls!
+    let objects: id = msg![env; this allKeys];
+    let count: NSUInteger = msg![env; objects count];
+    fast_enumeration_helper(env, this, |env, idx| {
+        if idx < count {
+            msg![env; objects objectAtIndex:idx]
+        } else {
+            nil
+        }
+    }, state, stackbuf, len)
 }
 
 // NSCopying implementation
@@ -463,6 +675,14 @@ pub const CLASSES: ClassExports = objc_classes! {
     }
     *env.objc.borrow_mut(this) = host_obj;
     mut_dict
+}
+
+// NSCoding implementation
+- (id)initWithCoder:(id)coder {
+    init_with_coder_inner(env, this, coder)
+}
+- (())encodeWithCoder:(id)coder {
+    encode_with_coder_inner(env, this, coder)
 }
 
 - (id)description {
@@ -490,6 +710,10 @@ pub const CLASSES: ClassExports = objc_classes! {
     init_with_objects_and_keys(env, this, first_object, dots.start())
 }
 
+- (id)initWithDictionary:(id)dictionary {
+    init_with_dictionary_common(env, this, dictionary)
+}
+
 - (id)init {
     *env.objc.borrow_mut(this) = <DictionaryHostObject as Default>::default();
     this
@@ -498,6 +722,19 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (id)initWithCapacity:(NSUInteger)_capacity {
     // TODO: capacity
     msg![env; this init]
+}
+
+// NSCoding implementation
+- (id)initWithCoder:(id)coder {
+    init_with_coder_inner(env, this, coder)
+}
+- (())encodeWithCoder:(id)coder {
+    encode_with_coder_inner(env, this, coder)
+}
+
+- (id)initWithObjects:(id)objects //NSArray *
+              forKeys:(id)keys { //NSArray *
+    init_with_objects_for_keys_common(env, this, objects, keys)
 }
 
 // TODO: enumeration, more init methods, etc
@@ -510,6 +747,24 @@ pub const CLASSES: ClassExports = objc_classes! {
     let res = host_obj.lookup(env, key);
     *env.objc.borrow_mut(this) = host_obj;
     res
+}
+
+// NSFastEnumeration implementation
+- (NSUInteger)countByEnumeratingWithState:(MutPtr<NSFastEnumerationState>)state
+                                  objects:(MutPtr<id>)stackbuf
+                                    count:(NSUInteger)len {
+    // TODO: check that dict wasn't mutated!
+    // We assume that order in which objects are reported is consistent
+    // between calls!
+    let objects: id = msg![env; this allKeys];
+    let count: NSUInteger = msg![env; objects count];
+    fast_enumeration_helper(env, this, |env, idx| {
+        if idx < count {
+            msg![env; objects objectAtIndex:idx]
+        } else {
+            nil
+        }
+    }, state, stackbuf, len)
 }
 
 // NSCopying implementation
@@ -530,6 +785,16 @@ pub const CLASSES: ClassExports = objc_classes! {
     mut_dict
 }
 
+- (())setValue:(id)value
+        forKey:(id)key { // NSString *
+    // TODO: assert that key is a string when using key-value coding
+    if value == nil {
+        msg![env; this removeObjectForKey:key]
+    } else {
+        msg![env; this setObject:value forKey:key]
+    }
+}
+
 - (())setObject:(id)object
          forKey:(id)key {
     // TODO: raise NSInvalidArgumentException
@@ -539,6 +804,18 @@ pub const CLASSES: ClassExports = objc_classes! {
     let mut host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(this));
     host_obj.insert(env, key, object, /* copy_key: */ true);
     *env.objc.borrow_mut(this) = host_obj;
+}
+
+- (())removeObjectForKey:(id)key {
+    assert!(!key.is_null());
+    let mut host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(this));
+    host_obj.remove(env, key);
+    *env.objc.borrow_mut(this) = host_obj;
+}
+
+- (())removeAllObjects {
+    let mut old_host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(this));
+    old_host_obj.release(env);
 }
 
 - (())addEntriesFromDictionary:(id)other { // NSDictionary *
@@ -551,6 +828,44 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (id)description {
     build_description(env, this)
+}
+
+- (id)allKeys {
+    all_keys_common(env, this)
+}
+
+- (id)allValues {
+    let host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(this));
+    let values: Vec<id> = host_obj.map.values().flatten().map(|&(_key, value)| value).collect();
+    *env.objc.borrow_mut(this) = host_obj;
+
+    for &val in &values {
+        retain(env, val);
+    }
+    let res = ns_array::from_vec(env, values);
+    autorelease(env, res)
+}
+
+- (id)allKeysForObject:(id)obj {
+    let res: id = msg_class![env; NSMutableArray new];
+
+    let host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(this));
+    host_obj.map.values().flatten().for_each(|&(key, value)| {
+        let equal = msg![env; obj isEqual:value];
+        if equal {
+            () = msg![env; res addObject:key];
+        }
+    });
+    *env.objc.borrow_mut(this) = host_obj;
+
+    let res_imm = msg![env; res copy];
+    release(env, res);
+    autorelease(env, res_imm)
+}
+
+- (id)objectEnumerator { // NSEnumerator*
+    let values: id = msg![env; this allValues];
+    msg![env; values objectEnumerator]
 }
 
 @end
@@ -602,7 +917,7 @@ pub const CLASSES: ClassExports = objc_classes! {
 }
 
 - (id)valueForKey:(id)_key {
-    panic!("Unexpected call to valueForKey: for _touchHLE_NSMutableDictionary_non_retaining object {:?}", this);
+    panic!("Unexpected call to valueForKey: for _touchHLE_NSMutableDictionary_non_retaining object {this:?}");
 }
 
 - (())setObject:(id)object
@@ -650,6 +965,25 @@ pub fn dict_from_keys_and_objects(env: &mut Environment, keys_and_objects: &[(id
     dict
 }
 
+/// Direct constructor for use by host code, similar to
+/// `[[NSMutableDictionary alloc] initWithObjectsAndKeys:]` but without
+/// variadics and with a more intuitive argument order.
+/// Unlike [super::ns_array::mutable_from_vec], this **does** copy and retain!
+pub fn mutable_dict_from_keys_and_objects(
+    env: &mut Environment,
+    keys_and_objects: &[(id, id)],
+) -> id {
+    let dict: id = msg_class![env; NSMutableDictionary alloc];
+
+    let mut host_object = <DictionaryHostObject as Default>::default();
+    for &(key, object) in keys_and_objects {
+        host_object.insert(env, key, object, /* copy_key: */ true);
+    }
+    *env.objc.borrow_mut(dict) = host_object;
+
+    dict
+}
+
 /// A helper to build a description NSString
 /// for a NSDictionary or a NSMutableDictionary.
 fn build_description(env: &mut Environment, dict: id) -> id {
@@ -684,4 +1018,55 @@ fn build_description(env: &mut Environment, dict: id) -> id {
     let desc_imm = msg![env; desc copy];
     release(env, desc);
     autorelease(env, desc_imm)
+}
+
+fn init_with_coder_inner(env: &mut Environment, dict: id, coder: id) -> id {
+    let class: Class = msg![env; coder class];
+    let keyed_unarch_class: Class = msg_class![env; NSKeyedUnarchiver class];
+    let nib_archive_class: Class = msg_class![env; _touchHLE_NIBArchiveDecoder class];
+    // It seems that every NSDictionary item in an NSKeyedArchiver plist looks
+    // like:
+    // {
+    //   "$class" => (uid of NSDictionary class goes here),
+    //   "NS.keys" => [
+    //     // keys here
+    //   ]
+    //   "NS.objects" => [
+    //     // objects here
+    //   ]
+    // }
+    let tuples = if env.objc.class_is_subclass_of(class, keyed_unarch_class) {
+        ns_keyed_unarchiver::decode_current_dict(env, coder)
+    } else if env.objc.class_is_subclass_of(class, nib_archive_class) {
+        _nib_archive_decoder::decode_current_dict(env, coder)
+    } else {
+        unimplemented!()
+    };
+
+    let mut host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(dict));
+    assert!(host_obj.map.is_empty());
+    for (key, val) in tuples {
+        host_obj.insert(env, key, val, /* copy_key: */ true);
+    }
+    *env.objc.borrow_mut(dict) = host_obj;
+    dict
+}
+
+fn encode_with_coder_inner(env: &mut Environment, dict: id, coder: id) {
+    let host_obj: DictionaryHostObject = std::mem::take(env.objc.borrow_mut(dict));
+    let mut encoded_keys = vec![];
+    let mut encoded_vals = vec![];
+    for (k, _) in host_obj.map.values().flatten() {
+        let kk = encode_object(env, coder, *k);
+        encoded_keys.push(plist::Value::Uid(kk));
+    }
+    for (_, v) in host_obj.map.values().flatten() {
+        let vv = encode_object(env, coder, *v);
+        encoded_vals.push(plist::Value::Uid(vv));
+    }
+    *env.objc.borrow_mut(dict) = host_obj;
+
+    let scope = get_value_to_encode_for_current_key(env, coder);
+    scope.insert("NS.keys".to_string(), plist::Value::Array(encoded_keys));
+    scope.insert("NS.objects".to_string(), plist::Value::Array(encoded_vals));
 }

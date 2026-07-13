@@ -14,15 +14,18 @@
 
 use super::gles11_raw as gles11;
 use super::gles11_raw::types::*;
+use super::gles_generic::GLES;
 use super::util::{try_decode_pvrtc, PalettedTextureFormat};
-use super::GLES;
+use super::GLESContext;
 use crate::window::{GLContext, GLVersion, Window};
 use std::ffi::CStr;
+use std::marker::PhantomData;
 
-pub struct GLES1Native {
+pub struct GLES1NativeContext {
     gl_ctx: GLContext,
+    is_loaded: bool,
 }
-impl GLES for GLES1Native {
+impl GLESContext for GLES1NativeContext {
     fn description() -> &'static str {
         "Native OpenGL ES 1.1"
     }
@@ -30,14 +33,55 @@ impl GLES for GLES1Native {
     fn new(window: &mut Window) -> Result<Self, String> {
         Ok(Self {
             gl_ctx: window.create_gl_context(GLVersion::GLES11)?,
+            is_loaded: false,
         })
     }
 
-    fn make_current(&self, window: &Window) {
-        unsafe { window.make_gl_context_current(&self.gl_ctx) };
-        gles11::load_with(|s| window.gl_get_proc_address(s))
+    fn make_current<'gl_ctx, 'win: 'gl_ctx>(
+        &'gl_ctx mut self,
+        window: &'win mut Window,
+    ) -> Box<dyn GLES + 'gl_ctx> {
+        if self.gl_ctx.is_current() && self.is_loaded {
+            return Box::new(GLES1Native {
+                _gl_lifetime: PhantomData,
+            });
+        }
+
+        unsafe {
+            window.make_gl_context_current(&self.gl_ctx);
+        }
+        gles11::load_with(|s| window.gl_get_proc_address(s));
+        self.is_loaded = true;
+        Box::new(GLES1Native {
+            _gl_lifetime: PhantomData,
+        })
     }
 
+    unsafe fn make_current_unchecked_for_window<'gl_ctx>(
+        &'gl_ctx mut self,
+        make_current_fn: &mut dyn FnMut(&GLContext),
+        loader_fn: &mut dyn FnMut(&'static str) -> *const std::ffi::c_void,
+    ) -> Box<dyn GLES + 'gl_ctx> {
+        if self.gl_ctx.is_current() && self.is_loaded {
+            return Box::new(GLES1Native {
+                _gl_lifetime: PhantomData,
+            });
+        }
+
+        make_current_fn(&self.gl_ctx);
+        gles11::load_with(loader_fn);
+        self.is_loaded = true;
+        Box::new(GLES1Native {
+            _gl_lifetime: PhantomData,
+        })
+    }
+}
+
+pub struct GLES1Native<'gl_ctx> {
+    _gl_lifetime: PhantomData<&'gl_ctx ()>,
+}
+
+impl GLES for GLES1Native<'_> {
     unsafe fn driver_description(&self) -> String {
         let version = CStr::from_ptr(gles11::GetString(gles11::VERSION) as *const _);
         let vendor = CStr::from_ptr(gles11::GetString(gles11::VENDOR) as *const _);
@@ -160,6 +204,12 @@ impl GLES for GLES1Native {
     unsafe fn PolygonOffsetx(&mut self, factor: GLfixed, units: GLfixed) {
         gles11::PolygonOffsetx(factor, units)
     }
+    unsafe fn SampleCoverage(&mut self, value: GLclampf, invert: GLboolean) {
+        gles11::SampleCoverage(value, invert)
+    }
+    unsafe fn SampleCoveragex(&mut self, value: GLclampx, invert: GLboolean) {
+        gles11::SampleCoveragex(value, invert)
+    }
     unsafe fn ShadeModel(&mut self, mode: GLenum) {
         gles11::ShadeModel(mode)
     }
@@ -183,6 +233,9 @@ impl GLES for GLES1Native {
     }
     unsafe fn StencilMask(&mut self, mask: GLuint) {
         gles11::StencilMask(mask);
+    }
+    unsafe fn LogicOp(&mut self, opcode: GLenum) {
+        gles11::LogicOp(opcode);
     }
 
     // Points
@@ -256,6 +309,9 @@ impl GLES for GLES1Native {
     }
 
     // Buffers
+    unsafe fn IsBuffer(&mut self, buffer: GLuint) -> GLboolean {
+        gles11::IsBuffer(buffer)
+    }
     unsafe fn GenBuffers(&mut self, n: GLsizei, buffers: *mut GLuint) {
         gles11::GenBuffers(n, buffers)
     }
@@ -564,6 +620,19 @@ impl GLES for GLES1Native {
         gles11::TexEnvi(target, pname, param)
     }
     unsafe fn TexEnvfv(&mut self, target: GLenum, pname: GLenum, params: *const GLfloat) {
+        if target == gles11::TEXTURE_FILTER_CONTROL_EXT {
+            assert!(pname == gles11::TEXTURE_LOD_BIAS_EXT);
+            unsafe {
+                if !CStr::from_ptr(gles11::GetString(gles11::EXTENSIONS) as _)
+                    .to_str()
+                    .unwrap()
+                    .contains("EXT_texture_lod_bias")
+                {
+                    log_dbg!("GL_EXT_texture_lod_bias is unsupported, skipping TexEnvfv({:#x}, {:#x}, ...) call", target, pname);
+                    return;
+                }
+            };
+        }
         gles11::TexEnvfv(target, pname, params)
     }
     unsafe fn TexEnvxv(&mut self, target: GLenum, pname: GLenum, params: *const GLfixed) {
@@ -571,6 +640,27 @@ impl GLES for GLES1Native {
     }
     unsafe fn TexEnviv(&mut self, target: GLenum, pname: GLenum, params: *const GLint) {
         gles11::TexEnviv(target, pname, params)
+    }
+
+    unsafe fn MultiTexCoord4f(
+        &mut self,
+        target: GLenum,
+        s: GLfloat,
+        t: GLfloat,
+        r: GLfloat,
+        q: GLfloat,
+    ) {
+        gles11::MultiTexCoord4f(target, s, t, r, q)
+    }
+    unsafe fn MultiTexCoord4x(
+        &mut self,
+        target: GLenum,
+        s: GLfixed,
+        t: GLfixed,
+        r: GLfixed,
+        q: GLfixed,
+    ) {
+        gles11::MultiTexCoord4x(target, s, t, r, q)
     }
 
     // Matrix stack operations
@@ -667,6 +757,12 @@ impl GLES for GLES1Native {
     }
     unsafe fn GenRenderbuffersOES(&mut self, n: GLsizei, renderbuffers: *mut GLuint) {
         gles11::GenRenderbuffersOES(n, renderbuffers)
+    }
+    unsafe fn IsFramebufferOES(&mut self, renderbuffer: GLuint) -> GLboolean {
+        gles11::IsFramebufferOES(renderbuffer)
+    }
+    unsafe fn IsRenderbufferOES(&mut self, renderbuffer: GLuint) -> GLboolean {
+        gles11::IsRenderbufferOES(renderbuffer)
     }
     unsafe fn BindFramebufferOES(&mut self, target: GLenum, framebuffer: GLuint) {
         gles11::BindFramebufferOES(target, framebuffer)

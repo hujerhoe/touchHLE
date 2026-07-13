@@ -5,7 +5,8 @@
  */
 //! `GKLocalPlayer`.
 
-use crate::objc::{objc_classes, ClassExports};
+use crate::dyld::{ConstantExports, HostConstant};
+use crate::objc::{id, nil, objc_classes, ClassExports};
 
 pub const CLASSES: ClassExports = objc_classes! {
 
@@ -13,7 +14,21 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 // TODO: proper inheritance chain
 @implementation GKLocalPlayer: NSObject
-// TODO
+
++ (id)localPlayer {
+    // TODO
+    nil
+}
+
 @end
 
 };
+
+pub const GKPlayerAuthenticationDidChangeNotificationName: &str =
+    "GKPlayerAuthenticationDidChangeNotificationName";
+
+/// `NSNotificationName` values.
+pub const CONSTANTS: ConstantExports = &[(
+    "_GKPlayerAuthenticationDidChangeNotificationName",
+    HostConstant::NSString(GKPlayerAuthenticationDidChangeNotificationName),
+)];

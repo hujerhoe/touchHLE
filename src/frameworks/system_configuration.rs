@@ -5,4 +5,12 @@
  */
 //! SystemConfiguration framework.
 
-pub mod sc_network_reachability;
+mod sc_network_reachability;
+
+pub const DYLIB: crate::dyld::HostDylib = crate::dyld::HostDylib {
+    path: "/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration",
+    aliases: &[],
+    class_exports: &[sc_network_reachability::CLASSES],
+    constant_exports: &[],
+    function_exports: &[sc_network_reachability::FUNCTIONS],
+};
